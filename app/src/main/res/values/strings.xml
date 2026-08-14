@@ -1,0 +1,33 @@
+<resources>
+    <string name="app_name">KeyMapper</string>
+    <string name="accessibility_service_description">允许 KeyMapper 模拟触屏操作，将蓝牙手柄按键映射到屏幕触摸。</string>
+    <string name="tab_devices">设备</string>
+    <string name="tab_mappings">映射</string>
+    <string name="btn_scan">扫描设备</string>
+    <string name="btn_stop_scan">停止扫描</string>
+    <string name="btn_connect">连接</string>
+    <string name="btn_disconnect">断开</string>
+    <string name="btn_add_mapping">添加映射</string>
+    <string name="btn_record">录制按键</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_save">保存</string>
+    <string name="title_button_picker">按下手柄按键…</string>
+    <string name="title_mapping_config">配置映射</string>
+    <string name="hint_select_button">选择或录制手柄按键</string>
+    <string name="hint_select_target">点击屏幕选择目标位置</string>
+    <string name="label_button">手柄按键</string>
+    <string name="label_target_x">X 坐标</string>
+    <string name="label_target_y">Y 坐标</string>
+    <string name="label_action_type">操作类型</string>
+    <string name="action_tap">点击</string>
+    <string name="action_long_press">长按</string>
+    <string name="label_duration">长按时长 (ms)</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_disconnected">未连接</string>
+    <string name="status_scanning">正在扫描…</string>
+    <string name="no_devices_found">未发现设备</string>
+    <string name="no_mappings">还没有映射，点击上方按钮添加</string>
+    <string name="request_accessibility">请先开启无障碍服务</string>
+    <string name="open_accessibility_settings">前往设置</string>
+    <string name="permission_needed">需要蓝牙权限</string>
+</resources>
