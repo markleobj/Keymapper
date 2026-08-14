@@ -1,6 +1,7 @@
 package com.keymapper.app
 
 import android.app.Application
+import android.util.Log
 import com.keymapper.app.bluetooth.BluetoothHidController
 import com.keymapper.app.mapping.MappingEngine
 import com.keymapper.app.mapping.MappingRepository
@@ -21,22 +22,29 @@ class KeyMapperApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        bluetoothController = BluetoothHidController(this)
-        mappingRepository = MappingRepository(this)
-        mappingEngine = MappingEngine(this, mappingRepository)
+        try {
+            bluetoothController = BluetoothHidController(this)
+            mappingRepository = MappingRepository(this)
+            mappingEngine = MappingEngine(this, mappingRepository)
 
-        // Wire up: button events -> mapping engine
-        val scope = kotlinx.coroutines.CoroutineScope(
-            kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate
-        )
-        scope.launch {
-            bluetoothController.buttonEvents.collect { event ->
-                mappingEngine.onButtonEvent(event)
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+            scope.launch {
+                bluetoothController.buttonEvents.collect { event ->
+                    try {
+                        mappingEngine.onButtonEvent(event)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "button event dispatch failed", e)
+                    }
+                }
             }
+            Log.i(TAG, "KeyMapperApp initialized OK")
+        } catch (e: Exception) {
+            Log.e(TAG, "KeyMapperApp init FAILED", e)
         }
     }
 
     companion object {
+        private const val TAG = "KeyMapperApp"
         lateinit var instance: KeyMapperApp
             private set
     }

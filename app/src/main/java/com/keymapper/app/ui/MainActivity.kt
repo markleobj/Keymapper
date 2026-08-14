@@ -12,7 +12,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.google.android.material.tabs.TabLayoutMediator
 import com.keymapper.app.KeyMapperApp
 import com.keymapper.app.R
 import com.keymapper.app.bluetooth.ConnectionState
@@ -20,7 +19,6 @@ import com.keymapper.app.databinding.ActivityMainBinding
 import com.keymapper.app.mapping.MappingAdapter
 import com.keymapper.app.service.KeyMapperAccessibilityService
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
 
