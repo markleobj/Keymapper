@@ -51,6 +51,7 @@ class BluetoothHidController(private val context: Context) {
     @Volatile private var running = false
 
     private var selectedAddress: String? = null
+    private val prefs by lazy { context.getSharedPreferences("keymapper", Context.MODE_PRIVATE) }
 
     private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
@@ -92,6 +93,14 @@ class BluetoothHidController(private val context: Context) {
         } else {
             context.registerReceiver(aclReceiver, filter)
         }
+        selectedAddress = prefs.getString("selected_address", null)
+        if (selectedAddress != null) {
+            val adapter = bluetoothAdapter
+            val name = try { adapter?.getRemoteDevice(selectedAddress)?.name ?: "未知手柄" } catch (e: Exception) { "未知手柄" }
+            _connectedDevice.value = DeviceInfo(name, selectedAddress!!)
+            _connectionState.value = ConnectionState.CONNECTED
+            Log.i(TAG, "🔄 恢复已选手柄: $name (${selectedAddress})")
+        }
     }
 
     fun release() {
@@ -107,19 +116,22 @@ class BluetoothHidController(private val context: Context) {
     /** 用户选中一个设备。完全不做任何阻塞调用，防止 ANR。 */
     fun selectDevice(address: String) {
         selectedAddress = address
+        prefs.edit().putString("selected_address", address).apply()
         val adapter = bluetoothAdapter
         val name = try { adapter?.getRemoteDevice(address)?.name ?: "未知手柄" } catch (e: Exception) { "未知手柄" }
         val info = DeviceInfo(name, address)
         _connectedDevice.value = info
         _connectionState.value = ConnectionState.CONNECTED
-        Log.i(TAG, "用户选中手柄: $name ($address)")
+        Log.i(TAG, "✅ 用户选中手柄: $name ($address) 已保存")
     }
 
     fun unselectDevice() {
         selectedAddress = null
+        prefs.edit().remove("selected_address").apply()
         stopListener()
         _connectionState.value = ConnectionState.DISCONNECTED
         _connectedDevice.value = null
+        Log.i(TAG, "❌ 已取消选中并清除保存")
     }
 
     private suspend fun tryConnectSpp(device: BluetoothDevice) = withContext(Dispatchers.IO) {
