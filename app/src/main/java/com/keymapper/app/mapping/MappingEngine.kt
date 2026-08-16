@@ -20,6 +20,16 @@ class MappingEngine(
 
     companion object {
         private const val TAG = "K2ER-Engine"
+
+        @Volatile var debugLastKey: String = "[等待按键...]"
+        @Volatile var debugEngineMsg: String = ""
+        @Volatile var debugExecMsg: String = ""
+
+        fun getDebugSummary(): String = buildString {
+            appendLine("🔑 按键: $debugLastKey")
+            appendLine("⚙️ 引擎: $debugEngineMsg")
+            appendLine("🎯 执行: $debugExecMsg")
+        }
     }
 
     fun setEnabled(enabled: Boolean) {
@@ -33,9 +43,15 @@ class MappingEngine(
     }
 
     fun updateActiveMappings(list: List<MappingConfig>) {
+        val sb = StringBuilder()
+        list.forEach { sb.append("${it.button}(${if (it.enabled) "✅" else "❌"}), ") }
+        Log.i(TAG, "📋 收到 ${list.size} 条: [$sb]")
         activeMappings = list.filter { it.enabled }
         enabled = true
-        Log.i(TAG, "激活映射数: ${activeMappings.size}, 引擎已自动启用")
+        debugEngineMsg = "激活 ${activeMappings.size}/${list.size} 条"
+        val sb2 = StringBuilder()
+        activeMappings.forEach { sb2.append("${it.button}→${it.actionType.name}(${it.targetX},${it.targetY}), ") }
+        Log.i(TAG, "🎯 激活 ${activeMappings.size}/${list.size}: [$sb2]")
     }
 
     private fun matchesDevice(event: HidButtonEvent, mapping: MappingConfig): Boolean {
@@ -55,7 +71,9 @@ class MappingEngine(
     }
 
     fun onButtonEvent(event: HidButtonEvent) {
+        debugLastKey = "${if (event.isPressed) "↓" else "↑"} ${event.buttonId}(${event.buttonName})"
         if (!enabled) {
+            debugExecMsg = "❌ 引擎未启用"
             Log.w(TAG, "⚠️ onButtonEvent: 引擎未启用 (enabled=false)")
             return
         }
@@ -65,12 +83,12 @@ class MappingEngine(
         val mapping = activeMappings.firstOrNull {
             (it.button == event.buttonId || it.button == event.buttonName) && matchesDevice(event, it)
         } ?: run {
-            if (activeMappings.isNotEmpty()) {
-                Log.d(TAG, "按键 ${event.buttonId} 没有匹配的映射 (已配置: ${activeMappings.map { it.button }})")
-            }
+            debugExecMsg = "⚠️ 无匹配映射 (已配置: ${activeMappings.map { it.button }})"
+            Log.d(TAG, "按键 ${event.buttonId} 没有匹配的映射 (已配置: ${activeMappings.map { it.button }})")
             return
         }
 
+        debugExecMsg = "✅ 匹配 ${mapping.button} → ${mapping.actionType.name}"
         Log.i(TAG, "🎯 触发: ${mapping.button} → ${mapping.actionType}")
 
         when (mapping.actionType) {
@@ -165,4 +183,12 @@ class MappingEngine(
     private fun Long.ifMinus(default: Long): Long = if (this > 0) this else default
 
     fun getButtonPressed(): String? = buttonStateMap.entries.firstOrNull { it.value }?.key
+
+    fun getDebugStatus(): String = buildString {
+        append("引擎enabled=").append(enabled)
+        append("  激活=").append(activeMappings.size)
+        append("  设备过滤=").append(requiredDeviceName ?: "无限制")
+        append("\n激活列表: ")
+        activeMappings.forEach { append("\n  [").append(it.button).append("→").append(it.actionType.name).append("] ") }
+    }
 }

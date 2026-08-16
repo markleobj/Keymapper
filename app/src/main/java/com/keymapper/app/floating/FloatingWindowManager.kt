@@ -25,6 +25,7 @@ import com.keymapper.app.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -56,6 +57,7 @@ class FloatingWindowManager(private val context: Context) {
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var observeJob: Job? = null
+    private var debugJob: Job? = null
 
     private var ballView: View? = null
     private var panelView: View? = null
@@ -174,12 +176,32 @@ class FloatingWindowManager(private val context: Context) {
             }
 
             refreshPanel()
+            startDebugLoop()
         } catch (e: Throwable) {
             Log.e(TAG, "show panel failed", e)
         }
     }
 
+    private fun startDebugLoop() {
+        debugJob?.cancel()
+        debugJob = scope.launch {
+            while (true) {
+                val tv = panelView?.findViewById<TextView>(R.id.tv_debug) ?: break
+                val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
+                val engineSummary = com.keymapper.app.mapping.MappingEngine.getDebugSummary()
+                val combined = buildString {
+                    appendLine("♿ 无障碍按键捕获: $a11yCount")
+                    append(engineSummary)
+                }
+                tv.text = combined
+                delay(300)
+            }
+        }
+    }
+
     private fun hidePanel() {
+        debugJob?.cancel()
+        debugJob = null
         try {
             panelView?.let { windowManager.removeViewImmediate(it) }
         } catch (_: Throwable) {}
