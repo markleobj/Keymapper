@@ -3,6 +3,7 @@ package com.keymapper.app.ui
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -15,6 +16,7 @@ import android.widget.Spinner
 import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatButton
 import androidx.appcompat.widget.Toolbar
@@ -52,6 +54,20 @@ class MappingConfigActivity : AppCompatActivity() {
     private var blocked: Boolean = true
     private var configName: String = ""
     private val comboSteps = mutableListOf<ActionStep>()
+
+    private val buttonPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val btn = result.data?.getStringExtra(EXTRA_PICKED_BUTTON)
+            Log.i("MappingConfig", "buttonPicker result: btn=$btn")
+            if (!btn.isNullOrBlank()) {
+                selectedButton = btn
+                tvPickedButton.text = btn
+                Toast.makeText(this, "已选: $btn", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            Log.i("MappingConfig", "buttonPicker cancelled or failed: rc=${result.resultCode}")
+        }
+    }
 
     companion object {
         const val EXTRA_MAPPING_ID = "mapping_id"
@@ -114,7 +130,7 @@ class MappingConfigActivity : AppCompatActivity() {
 
     private fun setupListeners() {
         btnPickButton.setOnClickListener {
-            startActivityForResult(Intent(this, ButtonPickerActivity::class.java), REQUEST_BUTTON_PICKER)
+            buttonPickerLauncher.launch(Intent(this, ButtonPickerActivity::class.java))
         }
         spinnerAction.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
@@ -193,15 +209,6 @@ class MappingConfigActivity : AppCompatActivity() {
                     Toast.makeText(this@MappingConfigActivity, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
                 }
             }
-        }
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_BUTTON_PICKER && resultCode == RESULT_OK) {
-            val btn = data?.getStringExtra(EXTRA_PICKED_BUTTON) ?: return
-            selectedButton = btn
-            tvPickedButton.text = btn
         }
     }
 
