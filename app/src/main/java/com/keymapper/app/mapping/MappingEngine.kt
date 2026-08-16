@@ -8,16 +8,11 @@ import com.keymapper.app.model.ActionType
 import com.keymapper.app.model.HidButtonEvent
 import com.keymapper.app.model.MappingConfig
 import com.keymapper.app.service.KeyMapperAccessibilityService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 class MappingEngine(
     private val repository: MappingRepository
 ) {
     private val handler = Handler(Looper.getMainLooper())
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var activeMappings: List<MappingConfig> = emptyList()
     private var enabled: Boolean = false
     private var requiredDeviceName: String? = null
@@ -29,12 +24,10 @@ class MappingEngine(
         @Volatile var debugLastKey: String = "[等待按键...]"
         @Volatile var debugEngineMsg: String = ""
         @Volatile var debugExecMsg: String = ""
-        @Volatile var debugInjectorMsg: String = ""
 
         fun getDebugSummary(): String = buildString {
             appendLine("🔑 按键: $debugLastKey")
             appendLine("⚙️ 引擎: $debugEngineMsg")
-            appendLine("💉 注入: $debugInjectorMsg")
             appendLine("🎯 执行: $debugExecMsg")
         }
     }
@@ -46,30 +39,16 @@ class MappingEngine(
 
     fun setRequiredDevice(name: String?) {
         requiredDeviceName = name
-        Log.i(TAG, "🎯 引擎设备过滤: ${name ?: "不限制（所有手柄都触发）"}")
+        Log.i(TAG, "🎯 引擎设备过滤: ${name ?: "不限制"}")
     }
 
     fun updateActiveMappings(list: List<MappingConfig>) {
-        val sb = StringBuilder()
-        list.forEach { sb.append("${it.button}(${if (it.enabled) "✅" else "❌"}), ") }
-        Log.i(TAG, "📋 收到 ${list.size} 条: [$sb]")
         activeMappings = list.filter { it.enabled }
         enabled = true
         debugEngineMsg = "激活 ${activeMappings.size}/${list.size} 条"
         val sb2 = StringBuilder()
         activeMappings.forEach { sb2.append("${it.button}→${it.actionType.name}(${it.targetX},${it.targetY}), ") }
         Log.i(TAG, "🎯 激活 ${activeMappings.size}/${list.size}: [$sb2]")
-        updateInjectorStatus()
-    }
-
-    private fun updateInjectorStatus() {
-        val hasShell = ShellExecutor.hasSecureSettingsPermission()
-        val hasA11y = KeyMapperAccessibilityService.isRunning()
-        debugInjectorMsg = when {
-            hasShell -> "✅ Shell (input tap)"
-            hasA11y -> "♿ 无障碍手势 (fallback)"
-            else -> "❌ 无注入器！需 ADB 授权 或 开无障碍"
-        }
     }
 
     private fun matchesDevice(event: HidButtonEvent, mapping: MappingConfig): Boolean {
@@ -114,71 +93,54 @@ class MappingEngine(
             val pkgMismatch = activeMappings.filter {
                 (it.button == event.buttonId || it.button == event.buttonName) && matchesDevice(event, it)
             }.any { !matchesPackage(it) }
-            if (pkgMismatch) {
-                debugExecMsg = "📱 当前APP不匹配 (前台: ${KeyMapperAccessibilityService.currentPackageName ?: "?"})"
+            debugExecMsg = if (pkgMismatch) {
+                "📱 当前APP不匹配 (前台: ${KeyMapperAccessibilityService.currentPackageName ?: "?"})"
             } else {
-                debugExecMsg = "⚠️ 无匹配映射"
+                "⚠️ 无匹配映射"
             }
             return
         }
 
-        debugExecMsg = "✅ ${mapping.button} → ${mapping.actionType.name} [${mapping.targetPackage ?: "全局"}]"
-        Log.i(TAG, "🎯 ${mapping.button} → ${mapping.actionType}")
-
-        if (!hasAnyInjector()) {
-            debugExecMsg = "❌ 无注入器！请授权 WRITE_SECURE_SETTINGS 或开启无障碍"
-            Log.w(TAG, "⚠️ 无注入器，跳过执行")
-            return
+        if (event.isPressed) {
+            debugExecMsg = "✅ ${mapping.button} → ${mapping.actionType.name} [${mapping.targetPackage ?: "全局"}]"
+            Log.i(TAG, "🎯 ${mapping.button} → ${mapping.actionType} @(${mapping.targetX},${mapping.targetY})")
+            executeAction(mapping)
         }
+    }
 
+    private fun ensureService(): KeyMapperAccessibilityService? {
+        val svc = KeyMapperAccessibilityService.instance
+        if (svc == null) {
+            debugExecMsg = "❌ 无障碍服务未运行！请开启无障碍"
+            Log.w(TAG, "⚠️ AccessibilityService 未运行，跳过执行")
+        }
+        return svc
+    }
+
+    private fun executeAction(mapping: MappingConfig) {
+        val svc = ensureService() ?: return
         when (mapping.actionType) {
-            ActionType.TAP -> if (event.isPressed) dispatchTap(mapping.targetX, mapping.targetY)
-            ActionType.LONG_PRESS -> if (event.isPressed) dispatchLongPress(mapping.targetX, mapping.targetY, mapping.duration.ifMinus(500))
-            ActionType.SWIPE -> if (event.isPressed) dispatchSwipe(
+            ActionType.TAP -> svc.performTap(mapping.targetX, mapping.targetY)
+            ActionType.LONG_PRESS -> svc.performLongPress(
+                mapping.targetX, mapping.targetY, mapping.duration.ifMinus(500)
+            )
+            ActionType.SWIPE -> svc.performSwipe(
                 mapping.targetX, mapping.targetY,
                 mapping.targetX + 200f, mapping.targetY,
                 mapping.duration.ifMinus(300)
             )
-            ActionType.MOUSE_MOVE -> if (event.isPressed) dispatchMouseMove(mapping)
-            ActionType.COMBO -> if (event.isPressed) dispatchCombo(mapping)
+            ActionType.MOUSE_MOVE -> {
+                val dur = mapping.duration.ifMinus(200)
+                svc.performSwipe(0.5f, 0.5f, mapping.targetX, mapping.targetY, dur)
+                handler.postDelayed({ svc.performTap(mapping.targetX, mapping.targetY) }, dur + 50)
+            }
+            ActionType.COMBO -> executeCombo(mapping, svc)
             ActionType.DO_NOTHING -> { }
         }
     }
 
-    private fun hasAnyInjector(): Boolean {
-        return ShellExecutor.hasSecureSettingsPermission() || KeyMapperAccessibilityService.isRunning()
-    }
-
-    private fun dispatchTap(x: Float, y: Float) {
-        scope.launch {
-            val ok = ShellExecutor.tryTap(x, y)
-            if (!ok) fallbackA11yTap(x, y)
-        }
-    }
-
-    private fun dispatchLongPress(x: Float, y: Float, durationMs: Long) {
-        scope.launch {
-            val ok = ShellExecutor.tryLongPress(x, y, durationMs)
-            if (!ok) fallbackA11yLongPress(x, y, durationMs)
-        }
-    }
-
-    private fun dispatchSwipe(x1: Float, y1: Float, x2: Float, y2: Float, durationMs: Long) {
-        scope.launch {
-            val ok = ShellExecutor.trySwipe(x1, y1, x2, y2, durationMs)
-            if (!ok) fallbackA11ySwipe(x1, y1, x2, y2, durationMs)
-        }
-    }
-
-    private fun dispatchMouseMove(mapping: MappingConfig) {
-        val x = mapping.targetX; val y = mapping.targetY
-        val dur = mapping.duration.ifMinus(200)
-        dispatchSwipe(0.5f, 0.5f, x, y, dur)
-        handler.postDelayed({ dispatchTap(x, y) }, dur + 50)
-    }
-
-    private fun dispatchCombo(mapping: MappingConfig) {
-        if (mapping.steps.isEmpty()) { dispatchTap(mapping.targetX, mapping.targetY); return }
+    private fun executeCombo(mapping: MappingConfig, svc: KeyMapperAccessibilityService) {
+        if (mapping.steps.isEmpty()) { svc.performTap(mapping.targetX, mapping.targetY); return }
         Log.i(TAG, "🎬 COMBO ${mapping.steps.size}步")
         var scheduledAt = 0L
         mapping.steps.forEachIndexed { i, step ->
@@ -191,50 +153,30 @@ class MappingEngine(
                 ActionType.MOUSE_MOVE -> step.duration.ifMinus(200) + 100L
                 else -> 50L
             }
-            handler.postDelayed({ executeStep(step, i + 1, mapping.steps.size) }, delay)
+            handler.postDelayed({ executeStep(step, i + 1, mapping.steps.size, svc) }, delay)
         }
     }
 
-    private fun executeStep(step: ActionStep, index: Int, total: Int) {
+    private fun executeStep(step: ActionStep, index: Int, total: Int, svc: KeyMapperAccessibilityService) {
         Log.i(TAG, "  ▶ 步骤 $index/$total: ${step.type} @(${step.targetX},${step.targetY})")
         when (step.type) {
-            ActionType.TAP -> dispatchTap(step.targetX, step.targetY)
-            ActionType.LONG_PRESS -> dispatchLongPress(step.targetX, step.targetY, step.duration.ifMinus(500))
-            ActionType.SWIPE -> dispatchSwipe(
+            ActionType.TAP -> svc.performTap(step.targetX, step.targetY)
+            ActionType.LONG_PRESS -> svc.performLongPress(step.targetX, step.targetY, step.duration.ifMinus(500))
+            ActionType.SWIPE -> svc.performSwipe(
                 step.targetX, step.targetY,
                 step.targetX + 200f, step.targetY,
                 step.duration.ifMinus(300)
             )
             ActionType.MOUSE_MOVE -> {
                 val dur = step.duration.ifMinus(200)
-                dispatchSwipe(0.5f, 0.5f, step.targetX, step.targetY, dur)
-                handler.postDelayed({ dispatchTap(step.targetX, step.targetY) }, dur + 50)
+                svc.performSwipe(0.5f, 0.5f, step.targetX, step.targetY, dur)
+                handler.postDelayed({ svc.performTap(step.targetX, step.targetY) }, dur + 50)
             }
             ActionType.COMBO, ActionType.DO_NOTHING -> { }
         }
     }
 
-    private fun fallbackA11yTap(x: Float, y: Float) {
-        KeyMapperAccessibilityService.instance?.performTap(x, y)
-            ?: Log.w(TAG, "⚠️ Shell 和 A11y 都不可用，无法 tap")
-    }
-
-    private fun fallbackA11yLongPress(x: Float, y: Float, dur: Long) {
-        KeyMapperAccessibilityService.instance?.performLongPress(x, y, dur)
-            ?: Log.w(TAG, "⚠️ Shell 和 A11y 都不可用，无法 longPress")
-    }
-
-    private fun fallbackA11ySwipe(x1: Float, y1: Float, x2: Float, y2: Float, dur: Long) {
-        KeyMapperAccessibilityService.instance?.performSwipe(x1, y1, x2, y2, dur)
-            ?: Log.w(TAG, "⚠️ Shell 和 A11y 都不可用，无法 swipe")
-    }
-
     private fun Long.ifMinus(default: Long): Long = if (this > 0) this else default
 
     fun getButtonPressed(): String? = buttonStateMap.entries.firstOrNull { it.value }?.key
-
-    fun getDebugStatus(): String = buildString {
-        append("enabled=").append(enabled)
-        append("  active=").append(activeMappings.size)
-    }
 }
