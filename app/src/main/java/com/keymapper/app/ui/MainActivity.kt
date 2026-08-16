@@ -47,6 +47,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
     private lateinit var btnNewP: AppCompatButton
     private lateinit var btnDelP: AppCompatButton
     private lateinit var tvMappingCount: TextView
+    private lateinit var tvEmptyHint: TextView
     private lateinit var mappingAdapter: MappingAdapter
     private var app: AppContainer? = null
 
@@ -447,6 +448,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             textSize = 15f; setTextColor(Color.parseColor("#FF1976D2"))
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             gravity = android.view.Gravity.CENTER
+            text = "加载中…"
             setBackgroundColor(Color.parseColor("#FFF0F4FF"))
             setPadding(dp(8), dp(8), dp(8), dp(8))
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4); marginEnd = dp(4) }
@@ -479,8 +481,20 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         }
         content.addView(tvMappingCount)
 
+        val mappingListFrame = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
         val mappingListRecycler = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@MainActivity)
+        }
+        tvEmptyHint = TextView(this).apply {
+            text = "👇 还没有映射，点下方『➕添加新映射』开始配置"
+            textSize = 12f
+            setTextColor(Color.parseColor("#FF9E9E9E"))
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(8), dp(24), dp(8), dp(24))
+            visibility = View.VISIBLE
         }
         mappingAdapter = MappingAdapter(
             onToggle = { cfg, enabled ->
@@ -508,7 +522,9 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             }
         )
         mappingListRecycler.adapter = mappingAdapter
-        content.addView(mappingListRecycler, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(240)))
+        mappingListFrame.addView(tvEmptyHint)
+        mappingListFrame.addView(mappingListRecycler)
+        content.addView(mappingListFrame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
         btnPrevP.setOnClickListener {
             val repo = app?.mappingRepository
@@ -614,6 +630,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
                 withContext(Dispatchers.Main) {
                     mappingAdapter.submitList(list)
                     tvMappingCount.text = "  本方案共 ${list.size} 条映射"
+                    tvEmptyHint.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
                 }
             }
         }
@@ -678,6 +695,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
                 val current = repo.currentProfile()
                 val idx = profiles.indexOf(current).coerceAtLeast(0)
                 val mappings = repo.getCurrent()
+                Log.i(TAG, "refreshAll: profiles=$profiles current=$current idx=$idx mappings=${mappings.size}")
                 withContext(Dispatchers.Main) {
                     tvProfileLabel.text = "📋 配置方案（${profiles.size}套）"
                     tvProfileName.text = "  ${profiles[idx]}  "
@@ -685,6 +703,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
                     btnNextP.isEnabled = idx < profiles.size - 1
                     tvMappingCount.text = "  本方案共 ${mappings.size} 条映射"
                     mappingAdapter.submitList(mappings)
+                    tvEmptyHint.visibility = if (mappings.isEmpty()) View.VISIBLE else View.GONE
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "refreshAll failed", e)
