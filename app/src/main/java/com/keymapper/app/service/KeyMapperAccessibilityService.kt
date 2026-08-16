@@ -288,6 +288,25 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
+    fun bringK2erTaskToFront() {
+        try {
+            val activityManager = getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
+            val task = activityManager?.appTasks?.firstOrNull()
+            task?.moveToFront()
+            Log.i(TAG, "🔙 K2ER task 已 moveToFront")
+        } catch (e: Throwable) {
+            Log.w(TAG, "moveTaskToFront 失败，用 fallback", e)
+            try {
+                val intent = android.content.Intent(this, com.keymapper.app.ui.MainActivity::class.java).apply {
+                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+                startActivity(intent)
+            } catch (e2: Throwable) {
+                Log.e(TAG, "fallback 也失败", e2)
+            }
+        }
+    }
+
     fun performTap(normX: Float, normY: Float): Boolean {
         val x = clampX(normX); val y = clampY(normY)
         val path = Path().apply { moveTo(x, y); lineTo(x, y) }

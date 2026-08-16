@@ -16,6 +16,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import com.keymapper.app.R
+import com.keymapper.app.service.KeyMapperAccessibilityService
 
 class CoordinatePickerOverlay(private val context: Context) {
 
@@ -42,15 +43,17 @@ class CoordinatePickerOverlay(private val context: Context) {
     private var overlayView: View? = null
 
     private fun bringK2erToFront() {
-        try {
-            val intent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        KeyMapperAccessibilityService.instance?.bringK2erTaskToFront()
+            ?: run {
+                Log.w(TAG, "AccessibilityService 未启动，fallback startActivity")
+                try {
+                    context.startActivity(Intent(context, MainActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    })
+                } catch (e: Throwable) {
+                    Log.e(TAG, "fallback startActivity 也失败", e)
+                }
             }
-            context.startActivity(intent)
-            Log.i(TAG, "🔙 K2ER task 已拉回前台")
-        } catch (e: Throwable) {
-            Log.e(TAG, "拉回 K2ER 失败", e)
-        }
     }
 
     @SuppressLint("InflateParams", "ClickableViewAccessibility")
