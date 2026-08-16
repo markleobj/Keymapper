@@ -31,7 +31,8 @@
             </intent-filter>
         </activity>
         <activity android:name=".ui.MappingConfigActivity" android:exported="false" />
-        <activity android:name=".ui.ButtonPickerActivity" android:exported="false" />
+        <activity android:name=".ui.ButtonPickerActivity" android:exported="false"
+              android:windowSoftInputMode="adjustResize|stateVisible" />
         <service android:name=".service.KeyMapperAccessibilityService"
             android:exported="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
