@@ -22,6 +22,11 @@ class KeyMapperApp : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            Log.e(TAG, "Uncaught exception in thread ${thread.name}", throwable)
+        }
+
         try {
             bluetoothController = BluetoothHidController(this)
             mappingRepository = MappingRepository(this)
@@ -38,7 +43,7 @@ class KeyMapperApp : Application() {
                 }
             }
             Log.i(TAG, "KeyMapperApp initialized OK")
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             Log.e(TAG, "KeyMapperApp init FAILED", e)
         }
     }
