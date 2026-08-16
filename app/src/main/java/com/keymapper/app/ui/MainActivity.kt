@@ -90,6 +90,14 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         }
     }
 
+    override fun onMotionCaptured(button: String, source: String, deviceName: String?) {
+        runOnUiThread {
+            motionAxisCount++
+            val device = deviceName ?: source
+            appendDebug("[A11yMOTION#$motionAxisCount] btn=$button src=$source dev=$device")
+        }
+    }
+
     override fun onGenericMotionEvent(ev: MotionEvent?): Boolean {
         ev ?: return super.onGenericMotionEvent(null)
         val act = when (ev.action) {
@@ -148,8 +156,9 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         runOnUiThread {
             try {
                 tvDebugLog.text = log
-                val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
-                tvDebugTitle.text = "🔍 诊断面板 (SDK=${Build.VERSION.SDK_INT}) [A11yKEY=$a11yCount ACTIVITY_KEY=$keyCount TOUCH=$motionCount MOTION=$motionAxisCount]"
+                val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
+                val a11yMotion = KeyMapperAccessibilityService.getA11yMotionCount()
+                tvDebugTitle.text = "🔍 诊断面板 (SDK=${Build.VERSION.SDK_INT}) [A11yKEY=$a11yKey A11yMOTION=$a11yMotion ACT_KEY=$keyCount ACT_MOTION=$motionAxisCount]"
             } catch (_: Exception) {}
         }
         Log.i(TAG, line)
@@ -168,6 +177,28 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         val info = KeyMapperAccessibilityService.enumerateInputDevices()
         appendDebug(info)
         Toast.makeText(this, "已刷新输入设备列表，看调试面板", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun dumpLogcat() {
+        Thread {
+            try {
+                val proc = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-s", "AccessibilityService:I", "MainActivity:I", "*:S"))
+                val output = proc.inputStream.bufferedReader().use { it.readText() }
+                runOnUiThread {
+                    appendDebug("========== LOGCAT 抓取 ==========")
+                    val lines = output.lines().takeLast(60)
+                    for (line in lines) appendDebug(line)
+                    if (lines.isEmpty()) appendDebug("（无输出 —— 可能缺少 READ_LOGS 权限）")
+                    appendDebug("====== 抓取结束 ======")
+                    Toast.makeText(this@MainActivity, "日志已抓取 ${lines.size} 行", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    appendDebug("❌ logcat 抓取失败: ${e.message}")
+                    Toast.makeText(this@MainActivity, "失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }.start()
     }
 
     private fun startEventCollectors() {
@@ -315,10 +346,11 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
 
         val refreshStatusBar = Runnable {
             val running = KeyMapperAccessibilityService.isRunning()
-            val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
+            val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
+            val a11yMotion = KeyMapperAccessibilityService.getA11yMotionCount()
             if (running) {
                 statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
-                tvA11yStatus.text = "✅ 无障碍服务已开启 (A11yKEY=$a11yCount)"
+                tvA11yStatus.text = "✅ 无障碍服务已开启 (A11yKEY=$a11yKey A11yMOTION=$a11yMotion)"
                 tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
                 btnGoA11y.visibility = View.GONE
             } else {
@@ -366,8 +398,14 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
             setOnClickListener { refreshDiagnosticPanel() }
         }
+        val btnDumpLog = AppCompatButton(this).apply {
+            text = "📋 抓取日志"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
+            setOnClickListener { dumpLogcat() }
+        }
         deviceBtnRow.addView(btnDumpDev)
         deviceBtnRow.addView(btnRefreshDiag)
+        deviceBtnRow.addView(btnDumpLog)
         content.addView(deviceBtnRow)
 
         val devicesTitle = TextView(this).apply {

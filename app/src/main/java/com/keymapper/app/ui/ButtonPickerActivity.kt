@@ -99,6 +99,13 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
         }
     }
 
+    override fun onMotionCaptured(button: String, source: String, deviceName: String?) {
+        runOnUiThread {
+            val device = deviceName ?: source
+            appendLog("🎮 onMotionCaptured: button=$button src=$source dev=$device")
+        }
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
         event ?: return super.dispatchKeyEvent(null)
         if (event.repeatCount > 0) return super.dispatchKeyEvent(event)
@@ -149,11 +156,10 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
 
     private fun updateA11yState() {
         val running = KeyMapperAccessibilityService.isRunning()
-        val lastKey = KeyMapperAccessibilityService.getLastKeyTime()
-        val since = if (lastKey > 0) (System.currentTimeMillis() - lastKey) / 1000 else -1
+        val a11yKeyCount = KeyMapperAccessibilityService.getA11yKeyCount()
 
         if (running) {
-            tvA11yState.text = "♿ 无障碍服务: 运行中 ✅" + if (since >= 0) " (上次按键 ${since}s 前)" else " (等待按键)"
+            tvA11yState.text = "♿ 无障碍服务: 运行中 ✅ (已捕获 $a11yKeyCount 个按键)"
             tvA11yState.setTextColor(Color.parseColor("#FF2E7D32"))
         } else {
             tvA11yState.text = "⚠️ 无障碍服务未运行 — 按键可能无法捕获！"

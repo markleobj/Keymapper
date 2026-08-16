@@ -4,12 +4,11 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Path
-import android.hardware.input.InputManager
 import android.os.Build
-import android.util.DisplayMetrics
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import com.keymapper.app.AppContainer
@@ -21,6 +20,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     interface KeyListener {
         fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?, rawKeyCode: Int)
+        fun onMotionCaptured(button: String, source: String, deviceName: String?)
     }
 
     companion object {
@@ -32,12 +32,12 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         fun isRunning(): Boolean = instance != null
 
         @Volatile
-        private var lastKeyTime: Long = 0
-        fun getLastKeyTime(): Long = lastKeyTime
-
-        @Volatile
         private var a11yKeyCount: Int = 0
         fun getA11yKeyCount(): Int = a11yKeyCount
+
+        @Volatile
+        private var a11yMotionCount: Int = 0
+        fun getA11yMotionCount(): Int = a11yMotionCount
 
         private val keyListeners = mutableListOf<KeyListener>()
 
@@ -108,34 +108,12 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             KeyEvent.KEYCODE_DPAD_DOWN     to Pair("DPAD_DOWN",  "下"),
             KeyEvent.KEYCODE_DPAD_LEFT     to Pair("DPAD_LEFT",  "左"),
             KeyEvent.KEYCODE_DPAD_RIGHT    to Pair("DPAD_RIGHT", "右"),
-            188 to Pair("BTN_1",  "1"),
-            189 to Pair("BTN_2",  "2"),
-            190 to Pair("BTN_3",  "3"),
-            191 to Pair("BTN_4",  "4"),
-            192 to Pair("BTN_5",  "5"),
-            193 to Pair("BTN_6",  "6"),
-            194 to Pair("BTN_7",  "7"),
-            195 to Pair("BTN_8",  "8"),
-            196 to Pair("BTN_9",  "9"),
-            197 to Pair("BTN_10", "10"),
-            198 to Pair("BTN_11", "11"),
-            199 to Pair("BTN_12", "12"),
-            200 to Pair("BTN_13", "13"),
-            201 to Pair("BTN_14", "14"),
-            202 to Pair("BTN_15", "15"),
-            203 to Pair("BTN_16", "16"),
         )
 
         fun keyEventToButton(event: KeyEvent): HidButtonEvent {
             val pair = KEYCODE_TO_BUTTON[event.keyCode]
                 ?: return HidButtonEvent("RAW_${event.keyCode}", "键#${event.keyCode}", event.action == KeyEvent.ACTION_DOWN)
             return HidButtonEvent(pair.first, pair.second, event.action == KeyEvent.ACTION_DOWN)
-        }
-
-        fun keyEventToButton(keyCode: Int): HidButtonEvent {
-            val pair = KEYCODE_TO_BUTTON[keyCode]
-                ?: return HidButtonEvent("RAW_$keyCode", "键#$keyCode", true)
-            return HidButtonEvent(pair.first, pair.second, true)
         }
 
         fun sourceToString(source: Int): String = when {
@@ -152,8 +130,14 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     private var screenWidth: Int = 0
     private var screenHeight: Int = 0
+    private var eventCount: Int = 0
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (eventCount++ % 1000 == 0) {
+            Log.d(TAG, "onAccessibilityEvent count=$eventCount")
+        }
+    }
+
     override fun onInterrupt() {}
 
     override fun onKeyEvent(event: KeyEvent?): Boolean {
@@ -161,7 +145,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         if (event.repeatCount > 0) return false
 
         a11yKeyCount++
-        lastKeyTime = System.currentTimeMillis()
         val btn = keyEventToButton(event)
         val source = sourceToString(event.source)
         val deviceName = try { event.device?.name } catch (_: Exception) { null }
@@ -177,7 +160,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             }
         }
 
-        Log.i(TAG, "onKeyEvent#$a11yKeyCount: keyCode=${event.keyCode} action=${event.action} src=$source device=$deviceName -> ${btn.buttonName}/${btn.buttonId}")
+        Log.i(TAG, "🔑 KEY#$a11yKeyCount: keyCode=${event.keyCode} act=${event.action} src=$source dev=$deviceName -> ${btn.buttonName}/${btn.buttonId}")
         return false
     }
 
@@ -188,7 +171,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         val metrics = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             wm.currentWindowMetrics.bounds
         } else {
-            val dm = DisplayMetrics()
+            val dm = android.util.DisplayMetrics()
             @Suppress("DEPRECATION")
             wm.defaultDisplay.getMetrics(dm)
             android.graphics.Rect(0, 0, dm.widthPixels, dm.heightPixels)
@@ -210,12 +193,14 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
             info.flags = oldFlags or FLAG_REQUEST_FILTER_KEY_EVENTS or FLAG_SEND_MOTION_EVENTS
             val result = setServiceInfo(info)
-            Log.i(TAG, "🔧 setServiceInfo oldFlags=0x${oldFlags.toString(16)} newFlags=0x${info.flags.toString(16)} result=$result")
+            Log.i(TAG, "🔧 setServiceInfo old=0x${oldFlags.toString(16)} new=0x${info.flags.toString(16)} reqFilterKey=$FLAG_REQUEST_FILTER_KEY_EVENTS reqMotion=$FLAG_SEND_MOTION_EVENTS result=$result")
         } catch (e: Exception) {
-            Log.w(TAG, "setServiceInfo failed: ${e.message}", e)
+            Log.e(TAG, "setServiceInfo failed: ${e.message}", e)
         }
 
-        Log.i(TAG, "📋 ${enumerateInputDevices()}")
+        val curFlags = serviceInfo.flags
+        Log.i(TAG, "📋 Current flags=0x${curFlags.toString(16)} a11yKeyCount=$a11yKeyCount a11yMotionCount=$a11yMotionCount")
+        Log.i(TAG, enumerateInputDevices())
     }
 
     override fun onDestroy() {
