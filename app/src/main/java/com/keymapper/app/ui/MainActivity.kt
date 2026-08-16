@@ -206,6 +206,10 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         val source = KeyMapperAccessibilityService.sourceToString(event.source)
         val mapping = btn?.let { "-> ${it.buttonName}/${it.buttonId}" } ?: ""
         appendDebug("[KEY#$keyCount] $action keyCode=${event.keyCode} src=$source $mapping")
+        val container = app
+        if (container != null && event.action == KeyEvent.ACTION_DOWN) {
+            runCatching { container.mappingEngine.onButtonEvent(btn) }
+        }
         return super.dispatchKeyEvent(event)
     }
 
@@ -426,16 +430,43 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             override fun run() {
                 val running = KeyMapperAccessibilityService.isRunning()
                 val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
-                if (running) {
-                    statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
-                    tvA11yStatus.text = "✅ 无障碍服务已开启 | 按键捕获: $a11yKey"
-                    tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
-                    btnGoA11y.visibility = View.GONE
-                } else {
-                    statusBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
-                    tvA11yStatus.text = "⚠️ 请先开启无障碍服务（这是按键捕获的关键）"
-                    tvA11yStatus.setTextColor(Color.parseColor("#FFC62828"))
-                    btnGoA11y.visibility = View.VISIBLE
+                val defaultIme = KeyMapperAccessibilityService.isKeymapperDefaultIme(this@MainActivity)
+                val imeActive = KeyMapperAccessibilityService.getImeActive()
+                when {
+                    running && defaultIme -> {
+                        statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
+                        tvA11yStatus.text = "✅ 无障碍运行中 ✅ IME已激活 | 按键: $a11yKey"
+                        tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
+                        btnGoA11y.visibility = View.GONE
+                    }
+                    running && !defaultIme -> {
+                        statusBar.setBackgroundColor(Color.parseColor("#FFFFF3E0"))
+                        tvA11yStatus.text = "⚠️ 无障碍已开 但 IME未激活（红色按钮点一下！）"
+                        tvA11yStatus.setTextColor(Color.parseColor("#FFE65100"))
+                        btnGoA11y.text = "去激活IME"
+                        btnGoA11y.visibility = View.VISIBLE
+                        btnGoA11y.setOnClickListener {
+                            try {
+                                val imm = getSystemService(INPUT_METHOD_SERVICE)
+                                    as? android.view.inputmethod.InputMethodManager
+                                imm?.showInputMethodPicker()
+                                    ?: startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                            } catch (_: Exception) {
+                                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                            }
+                        }
+                    }
+                    else -> {
+                        statusBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
+                        tvA11yStatus.text = "⚠️ 请先开启无障碍服务（这是按键捕获的关键）"
+                        tvA11yStatus.setTextColor(Color.parseColor("#FFC62828"))
+                        btnGoA11y.text = "去开启"
+                        btnGoA11y.visibility = View.VISIBLE
+                        btnGoA11y.setOnClickListener {
+                            try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                            catch (_: Exception) { Toast.makeText(this@MainActivity, "手动打开系统设置 → 无障碍", Toast.LENGTH_LONG).show() }
+                        }
+                    }
                 }
                 root.postDelayed(this, 2000)
             }

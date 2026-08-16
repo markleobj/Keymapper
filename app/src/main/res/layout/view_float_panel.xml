@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="260dp"
+    android:layout_width="280dp"
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="#FFFFFFFF"
@@ -35,10 +35,21 @@
         android:paddingBottom="8dp"
         android:text="[等待按键...]" />
 
+    <Button
+        android:id="@+id/btn_ime_setup"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:backgroundTint="#FFD32F2F"
+        android:textColor="#FFFFFFFF"
+        android:textSize="11sp"
+        android:text="📱 激活 KeyMapper 输入法（必做）" />
+
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:maxHeight="300dp">
+        android:maxHeight="260dp"
+        android:layout_marginTop="4dp">
 
         <LinearLayout
             android:id="@+id/list_container"

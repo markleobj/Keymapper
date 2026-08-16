@@ -83,6 +83,17 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         }
 
         @JvmStatic
+        fun isKeymapperDefaultIme(context: Context): Boolean {
+            return try {
+                val defaultId = android.provider.Settings.Secure.getString(
+                    context.contentResolver,
+                    android.provider.Settings.Secure.DEFAULT_INPUT_METHOD
+                )
+                defaultId?.contains("keymapper", ignoreCase = true) == true
+            } catch (_: Exception) { false }
+        }
+
+        @JvmStatic
         fun refreshForegroundPackage() {
             val svc = instance ?: return
             runCatching {
@@ -168,6 +179,10 @@ class KeyMapperAccessibilityService : AccessibilityService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val MY_PACKAGE = "com.keymapper.app"
 
+    private var keyCaptureView: android.view.View? = null
+    private var keyCaptureParams: WindowManager.LayoutParams? = null
+    private var keyCaptureAttached = false
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -187,11 +202,14 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         // 某些 Android 版本 / OEM ROM 会忽略 XML 里的 flagRequestFilterKeyEvents，
         // 必须在 onServiceConnected 里主动设置才能激活按键过滤。
         val info = serviceInfo
+        val FLAG_DEFAULT = 0x00000001
+        val FLAG_INPUT_METHOD_EDITOR = 0x00010000
         info.flags = (info.flags
-                or 1  // FLAG_DEFAULT
+                or FLAG_DEFAULT
                 or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
                 or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-                or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS)
+                or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                or FLAG_INPUT_METHOD_EDITOR)
         info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_ALL_MASK
         info.notificationTimeout = 100
@@ -200,9 +218,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         val flags = serviceInfo.flags
         val hasFilterKey = flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
         val hasRetrieveWin = flags and AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS != 0
-
-        // flagInputMethodEditor 是隐藏常量 0x10000，只能靠 XML 或反射设置
-        val FLAG_INPUT_METHOD_EDITOR = 0x00010000
         val hasImeEditor = flags and FLAG_INPUT_METHOD_EDITOR != 0
 
         flagsSummary = "flags=0x${flags.toString(16)} " +
@@ -255,6 +270,75 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         } catch (e: Throwable) {
             Log.e(TAG, "AppContainer 初始化失败", e)
         }
+
+        attachKeyCaptureWindow()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun attachKeyCaptureWindow() {
+        if (keyCaptureAttached) return
+        try {
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val view = object : android.view.View(this) {
+                init {
+                    isFocusable = true
+                    isFocusableInTouchMode = true
+                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                    setOnKeyListener { _, _, event ->
+                        if (event == null) return@setOnKeyListener false
+                        onKeyEvent(event)
+                        true
+                    }
+                }
+
+                override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+                    return false
+                }
+
+                override fun onGenericMotionEvent(event: android.view.MotionEvent): Boolean {
+                    return false
+                }
+            }
+            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            }
+            val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                type,
+                flags,
+                android.graphics.PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            }
+            wm.addView(view, params)
+            keyCaptureView = view
+            keyCaptureParams = params
+            keyCaptureAttached = true
+            view.post { view.requestFocus() }
+            Log.i(TAG, "✅ 按键捕获 Window 已挂载 (全屏透明可聚焦)")
+        } catch (e: Throwable) {
+            Log.e(TAG, "❌ attachKeyCaptureWindow 失败", e)
+        }
+    }
+
+    private fun detachKeyCaptureWindow() {
+        if (!keyCaptureAttached) return
+        try {
+            val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            keyCaptureView?.let { wm.removeViewImmediate(it) }
+        } catch (e: Throwable) {
+            Log.w(TAG, "detachKeyCaptureWindow error", e)
+        } finally {
+            keyCaptureView = null
+            keyCaptureParams = null
+            keyCaptureAttached = false
+        }
     }
 
     private fun enumerateInputDevices() {
@@ -297,7 +381,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    @androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
     override fun onCreateInputMethod(): InputMethod {
         val result = super.onCreateInputMethod()
         imeBridge = result

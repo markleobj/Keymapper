@@ -20,6 +20,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatButton
 import androidx.appcompat.widget.Toolbar
+import com.keymapper.app.service.KeyMapperAccessibilityService
+import android.view.KeyEvent
 import androidx.lifecycle.lifecycleScope
 import com.keymapper.app.AppContainer
 import com.keymapper.app.model.ActionStep
@@ -97,6 +99,7 @@ class MappingConfigActivity : AppCompatActivity() {
         const val EXTRA_MAPPING_ID = "mapping_id"
         const val REQUEST_BUTTON_PICKER = 200
         const val EXTRA_PICKED_BUTTON = "picked_button"
+        private const val TAG = "MappingConfig"
     }
 
     private val actionChinese = mapOf(
@@ -135,6 +138,17 @@ class MappingConfigActivity : AppCompatActivity() {
                 } catch (_: Exception) {}
             }
         }
+    }
+    override fun dispatchKeyEvent(event: android.view.KeyEvent?): Boolean {
+        event ?: return super.dispatchKeyEvent(null)
+        if (event.repeatCount > 0) return super.dispatchKeyEvent(event)
+        val btn = KeyMapperAccessibilityService.keyEventToButton(event)
+        Log.i(TAG, "[CFG KEY] act=${event.action} kc=${event.keyCode} -> ${btn.buttonName}")
+        val container = app
+        if (container != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
+            runCatching { container.mappingEngine.onButtonEvent(btn) }
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private fun setupActionTypeSpinner() {

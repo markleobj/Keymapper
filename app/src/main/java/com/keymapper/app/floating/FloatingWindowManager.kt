@@ -175,6 +175,18 @@ class FloatingWindowManager(private val context: Context) {
                 hidePanel()
             }
 
+            panel.findViewById<View>(R.id.btn_ime_setup).setOnClickListener {
+                val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                    as? android.view.inputmethod.InputMethodManager
+                try {
+                    imm?.showInputMethodPicker()
+                } catch (e: Throwable) {
+                    val intent = android.content.Intent(android.provider.Settings.ACTION_INPUT_METHOD_SETTINGS)
+                    intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                }
+            }
+
             refreshPanel()
             startDebugLoop()
         } catch (e: Throwable) {
@@ -187,10 +199,12 @@ class FloatingWindowManager(private val context: Context) {
         debugJob = scope.launch {
             while (true) {
                 val tv = panelView?.findViewById<TextView>(R.id.tv_debug) ?: break
+                val imeBtn = panelView?.findViewById<View>(R.id.btn_ime_setup)
                 KeyMapperAccessibilityService.refreshForegroundPackage()
                 val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
                 val imeCount = KeyMapperAccessibilityService.getImeForwardCount()
                 val imeOn = KeyMapperAccessibilityService.getImeActive()
+                val defaultIme = KeyMapperAccessibilityService.isKeymapperDefaultIme(context)
                 val engineSummary = com.keymapper.app.mapping.MappingEngine.getDebugSummary()
                 val currentPkg = KeyMapperAccessibilityService.currentPackageName ?: "?"
                 val currentLabel = KeyMapperAccessibilityService.currentPackageLabel
@@ -198,9 +212,13 @@ class FloatingWindowManager(private val context: Context) {
                 val combined = buildString {
                     appendLine("📱 当前APP: $pkgDisplay")
                     appendLine("♿ A11y按键: $a11yCount  🔤 IME: $imeCount (${if (imeOn) "✅" else "❌"})")
+                    if (!defaultIme) appendLine("⚠️ 未设为默认输入法！")
                     append(engineSummary)
                 }
                 tv.text = combined
+                imeBtn?.post {
+                    imeBtn.visibility = if (defaultIme) View.GONE else View.VISIBLE
+                }
                 delay(300)
             }
         }
