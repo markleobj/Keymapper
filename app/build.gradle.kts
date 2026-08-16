@@ -52,4 +52,7 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.0.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("com.google.code.gson:gson:2.10.1")
+
+implementation("dev.rikka.shizuku:api:13.1.5")
+implementation("dev.rikka.shizuku:provider:13.1.5")
 }

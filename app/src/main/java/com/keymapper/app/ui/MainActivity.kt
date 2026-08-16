@@ -95,19 +95,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshStatusBar() {
-        val a11yOn = KeyMapperAccessibilityService.isRunning()
-        val floatOn = MappingForegroundService.isRunning()
+        val shizukuOk = com.keymapper.app.mapping.ShizukuShell.isPermissionGranted()
+        val floatOn = com.keymapper.app.service.MappingForegroundService.isRunning()
         val currentPkg = KeyMapperAccessibilityService.currentPackageName
         val currentLabel = KeyMapperAccessibilityService.currentPackageLabel
         val pkgDisplay = if (currentLabel != null) "$currentLabel" else (currentPkg ?: "未知")
         runOnUiThread {
             tvStatusBar.text = when {
-                !a11yOn -> "⚠️ 无障碍未开 — 点『激活』开启"
+                !shizukuOk -> "⚠️ Shizuku 未激活 — 点『激活』按引导操作"
                 !floatOn -> "⚠️ 悬浮未开 | 当前: $pkgDisplay"
                 else -> "✅ 运行中 | $pkgDisplay"
             }
             tvStatusBar.setTextColor(
-                if (a11yOn && floatOn) Color.parseColor("#FF2E7D32")
+                if (shizukuOk && floatOn) Color.parseColor("#FF2E7D32")
                 else Color.parseColor("#FFE65100")
             )
         }
@@ -484,27 +484,56 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stepWiseActivation() {
-        if (!KeyMapperAccessibilityService.isRunning()) {
+        val shizukuOk = com.keymapper.app.mapping.ShizukuShell.isPermissionGranted()
+        val binderOk = com.keymapper.app.mapping.ShizukuShell.isBinderAvailable()
+
+        if (!shizukuOk) {
+            val msg = buildString {
+                appendLine("【第 1 步：激活 Shizuku】")
+                appendLine()
+                appendLine("KeyMapper 基于 K2er 技术路线，使用 Shizuku 获得 shell 权限来模拟触摸。")
+                appendLine()
+                appendLine("✅ 无需无障碍服务")
+                appendLine("✅ 无需 root")
+                appendLine()
+                appendLine("操作步骤：")
+                appendLine("1️⃣ 下载安装 Shizuku Manager")
+                appendLine("   https://shizuku.rikka.app/download/")
+                appendLine("2️⃣ 打开 Shizuku Manager，按引导用 ADB 或 Wireless Debugging 启动服务")
+                appendLine("3️⃣ 回到 KeyMapper，点击『授权』按钮授予权限")
+            }
             AlertDialog.Builder(this)
-                .setTitle("第 1 步：开启无障碍服务")
-                .setMessage("KeyMapper 需要无障碍服务来：\n• 监听手柄按键事件\n• 模拟触摸（点击/滑动/长按）\n• 识别当前前台 APP\n\n点击确定后跳转到系统无障碍设置，找到『KeyMapper』开启即可。")
-                .setPositiveButton("去开启") { _, _ ->
-                    startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                .setTitle("🔑 激活 KeyMapper")
+                .setMessage(msg)
+                .setPositiveButton("去下载 Shizuku") { _, _ ->
+                    startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://shizuku.rikka.app/download/")))
                 }
-                .setNegativeButton("取消", null)
+                .setNeutralButton("授权") { _, _ ->
+                    com.keymapper.app.mapping.ShizukuShell.requestPermission(this) { granted, _ ->
+                        if (granted) {
+                            Toast.makeText(this, "✅ Shizuku 权限已授予！", Toast.LENGTH_LONG).show()
+                            if (!android.provider.Settings.canDrawOverlays(this)) {
+                                requestOverlayAndStart()
+                            } else {
+                                MappingForegroundService.start(this)
+                                Toast.makeText(this, "🎉 激活完成！", Toast.LENGTH_LONG).show()
+                            }
+                            refreshAll()
+                        } else {
+                            Toast.makeText(this, "❌ 权限被拒绝，请先在 Shizuku Manager 中启动服务", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }
+                .setNegativeButton("关闭", null)
                 .show()
             return
         }
+
         if (!android.provider.Settings.canDrawOverlays(this)) {
             AlertDialog.Builder(this)
                 .setTitle("第 2 步：允许显示悬浮窗")
                 .setMessage("KeyMapper 需要悬浮窗权限来在任何 APP 上方显示控制面板。")
-                .setPositiveButton("去开启") { _, _ ->
-                    startActivity(Intent(
-                        android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                        android.net.Uri.parse("package:$packageName")
-                    ))
-                }
+                .setPositiveButton("去开启") { _, _ -> requestOverlayAndStart() }
                 .setNegativeButton("取消", null)
                 .show()
             return

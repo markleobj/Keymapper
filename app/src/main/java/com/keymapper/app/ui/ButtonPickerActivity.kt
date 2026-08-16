@@ -201,8 +201,8 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
 
         if (event.action == KeyEvent.ACTION_DOWN) {
             val btn = KeyMapperAccessibilityService.keyEventToButton(event)
-            lastButton = btn
-            tvDetected.text = "已捕获：${btn.buttonName} (${btn.buttonId})\n设备: ${event.device?.name ?: source}\n来源: Activity"
+            lastButton = HidButtonEvent(btn, btn, true, System.currentTimeMillis(), event.device?.name)
+            tvDetected.text = "已捕获：$btn\n设备: ${event.device?.name ?: source}\n来源: Activity"
             btnConfirm.isEnabled = true
         }
         return super.dispatchKeyEvent(event)

@@ -44,7 +44,7 @@ class CoordinatePickerOverlay(private val context: Context) {
     private var overlayView: View? = null
 
     private fun bringK2erToFront() {
-        KeyMapperAccessibilityService.instance?.bringK2erTaskToFront()
+        KeyMapperAccessibilityService.bringK2erTaskToFront()
             ?: run {
                 Log.w(TAG, "AccessibilityService 未启动，fallback startActivity")
                 try {

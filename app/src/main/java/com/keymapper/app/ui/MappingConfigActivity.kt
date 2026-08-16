@@ -31,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import com.keymapper.app.model.HidButtonEvent
 
 class MappingConfigActivity : AppCompatActivity() {
 
@@ -146,10 +147,13 @@ class MappingConfigActivity : AppCompatActivity() {
         event ?: return super.dispatchKeyEvent(null)
         if (event.repeatCount > 0) return super.dispatchKeyEvent(event)
         val btn = KeyMapperAccessibilityService.keyEventToButton(event)
-        Log.i(TAG, "[CFG KEY] act=${event.action} kc=${event.keyCode} -> ${btn.buttonName}")
+        Log.i(TAG, "[CFG KEY] act=${event.action} kc=${event.keyCode} -> $btn")
         val container = app
         if (container != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
-            runCatching { container.mappingEngine.onButtonEvent(btn) }
+            runCatching { container.mappingEngine.onButtonEvent(
+  HidButtonEvent(btn, btn, true, System.currentTimeMillis(), event.device?.name),
+  KeyMapperAccessibilityService.currentPackageName
+) }
         }
         return super.dispatchKeyEvent(event)
     }
