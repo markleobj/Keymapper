@@ -202,6 +202,7 @@ class FloatingWindowManager(private val context: Context) {
                 val imeBtn = panelView?.findViewById<View>(R.id.btn_ime_setup)
                 KeyMapperAccessibilityService.refreshForegroundPackage()
                 val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
+                val touchCount = KeyMapperAccessibilityService.getTouchKeyCount()
                 val imeCount = KeyMapperAccessibilityService.getImeForwardCount()
                 val imeOn = KeyMapperAccessibilityService.getImeActive()
                 val defaultIme = KeyMapperAccessibilityService.isKeymapperDefaultIme(context)
@@ -211,8 +212,8 @@ class FloatingWindowManager(private val context: Context) {
                 val pkgDisplay = if (currentLabel != null) "$currentLabel($currentPkg)" else currentPkg
                 val combined = buildString {
                     appendLine("📱 当前APP: $pkgDisplay")
-                    appendLine("♿ A11y按键: $a11yCount  🔤 IME: $imeCount (${if (imeOn) "✅" else "❌"})")
-                    if (!defaultIme) appendLine("⚠️ 未设为默认输入法！")
+                    appendLine("♿ A11y按键: $a11yCount  🎮触摸→按键: $touchCount")
+                    if (!defaultIme) appendLine("💡 无需改输入法，触摸→按键已工作")
                     append(engineSummary)
                 }
                 tv.text = combined

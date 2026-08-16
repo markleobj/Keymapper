@@ -10,6 +10,7 @@ import android.os.Build
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import com.keymapper.app.AppContainer
@@ -31,6 +32,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
     }
 
     companion object {
+        fun getTouchKeyCount(): Int = instance?.gamepadTracker?.touchKeyCount ?: 0
         private const val TAG = "K2ER-Service"
         @Volatile
         var instance: KeyMapperAccessibilityService? = null
@@ -183,6 +185,84 @@ class KeyMapperAccessibilityService : AccessibilityService() {
     private var keyCaptureParams: WindowManager.LayoutParams? = null
     private var keyCaptureAttached = false
 
+    private var touchStartX: Float = 0f
+    private var touchStartY: Float = 0f
+    private var touchDevName: String = ""
+    private var touchMoved: Boolean = false
+
+    private val gamepadTracker = object {
+        private val _touchKeyCount = java.util.concurrent.atomic.AtomicInteger(0)
+        val touchKeyCount get() = _touchKeyCount.get()
+        fun inc() { _touchKeyCount.incrementAndGet() }
+
+        fun processTouch(ev: MotionEvent): Boolean {
+            val dev = ev.device ?: return false
+            val devName = dev.name ?: ""
+            val source = ev.source
+            val devNameLower = devName.lowercase()
+            val isGP = devNameLower.contains("r1s") || devNameLower.contains("gamepad")
+                    || devNameLower.contains("controller")
+                    || source and InputDevice.SOURCE_GAMEPAD != 0
+            if (!isGP) return false
+
+            val rawX = ev.rawX; val rawY = ev.rawY
+            val container = runCatching { AppContainer.getOrCreate(this@KeyMapperAccessibilityService) }.getOrNull()
+
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
+                    touchStartX = rawX; touchStartY = rawY
+                    touchDevName = devName; touchMoved = false
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (kotlin.math.abs(rawX - touchStartX) > 30f || kotlin.math.abs(rawY - touchStartY) > 30f) {
+                        touchMoved = true
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    val endX = rawX; val endY = rawY
+                    val button = inferButtonFromTouch(touchStartX, touchStartY, endX, endY, touchMoved)
+                    val btn = HidButtonEvent(button, button, true, deviceName = devName)
+                    val container2 = container
+                    if (container2 != null) {
+                        container2.mappingEngine.onButtonEvent(btn)
+                        _touchKeyCount.incrementAndGet()
+                        synchronized(keyListeners) {
+                            for (l in keyListeners.toList()) {
+                                runCatching { l.onKeyCaptured(btn, sourceToString(source), devName, -1) }
+                            }
+                        }
+                    }
+                    Log.i(TAG, "🎮 Window触摸判定按键: $button dev=\"$devName\" start=(${touchStartX.toInt()},${touchStartY.toInt()}) end=(${endX.toInt()},${endY.toInt()}) moved=$touchMoved")
+                }
+            }
+            return false
+        }
+    }
+    private fun inferButtonFromTouch(startX: Float, startY: Float, endX: Float, endY: Float, moved: Boolean): String {
+        val dx = endX - startX; val dy = endY - startY
+        if (moved || kotlin.math.abs(dx) > 30f || kotlin.math.abs(dy) > 30f) {
+            return when {
+                kotlin.math.abs(dx) > kotlin.math.abs(dy) -> if (dx > 0) "DPAD_RIGHT" else "DPAD_LEFT"
+                kotlin.math.abs(dy) > 30f -> if (dy > 0) "DPAD_DOWN" else "DPAD_UP"
+                else -> inferStaticButton(startX, startY)
+            }
+        }
+        return inferStaticButton(startX, startY)
+    }
+
+    private fun inferStaticButton(x: Float, y: Float): String {
+        val rng = 1000f; val cx = rng / 2f; val cy = rng / 2f
+        val nx = (x - cx) / cx; val ny = (y - cy) / cy
+        return when {
+            nx in -0.2..0.2 && ny in -0.2..0.2 -> "BTN_A"
+            nx > 0.2 && ny in -0.3..0.3 -> "BTN_B"
+            nx in -0.3..0.3 && ny > 0.2 -> "BTN_X"
+            nx in -0.3..0.3 && ny < -0.2 -> "BTN_Y"
+            nx < -0.2 && ny in -0.3..0.3 -> "BTN_START"
+            else -> "BTN_${x.toInt()}_${y.toInt()}"
+        }
+    }
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
@@ -291,11 +371,13 @@ class KeyMapperAccessibilityService : AccessibilityService() {
                     }
                 }
 
-                override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+                override fun onTouchEvent(event: MotionEvent): Boolean {
+                    gamepadTracker.processTouch(event)
                     return false
                 }
 
-                override fun onGenericMotionEvent(event: android.view.MotionEvent): Boolean {
+                override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+                    if (gamepadTracker.processTouch(event)) return true
                     return false
                 }
             }
@@ -305,7 +387,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             }
-            val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+            val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -321,7 +403,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             keyCaptureParams = params
             keyCaptureAttached = true
             view.post { view.requestFocus() }
-            Log.i(TAG, "✅ 按键捕获 Window 已挂载 (全屏透明可聚焦)")
+            Log.i(TAG, "✅ 按键+触摸捕获 Window 已挂载 (全屏透明，触摸→按键判定)")
         } catch (e: Throwable) {
             Log.e(TAG, "❌ attachKeyCaptureWindow 失败", e)
         }
