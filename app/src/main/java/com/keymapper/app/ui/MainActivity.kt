@@ -1,6 +1,5 @@
 package com.keymapper.app.ui
 
-
 import android.provider.Settings
 import android.Manifest
 import android.content.Intent
@@ -28,12 +27,13 @@ import androidx.recyclerview.widget.RecyclerView
 import com.keymapper.app.AppContainer
 import com.keymapper.app.bluetooth.ConnectionState
 import com.keymapper.app.mapping.MappingAdapter
+import com.keymapper.app.model.HidButtonEvent
 import com.keymapper.app.service.KeyMapperAccessibilityService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListener {
 
     private lateinit var devicesRecycler: RecyclerView
     private lateinit var tvDevicesStatus: TextView
@@ -71,6 +71,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        KeyMapperAccessibilityService.addKeyListener(this)
+        refreshDiagnosticPanel()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        KeyMapperAccessibilityService.removeKeyListener(this)
+    }
+
+    override fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?, rawKeyCode: Int) {
+        runOnUiThread {
+            keyCount++
+            val device = deviceName ?: source
+            appendDebug("[A11yKEY#$keyCount] keyCode=$rawKeyCode action=${if (event.isPressed) "DOWN" else "UP"} src=$source dev=$device -> ${event.buttonName}/${event.buttonId}")
+        }
+    }
+
     override fun onGenericMotionEvent(ev: MotionEvent?): Boolean {
         ev ?: return super.onGenericMotionEvent(null)
         val act = when (ev.action) {
@@ -91,7 +110,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (axes.isNotEmpty() || ev.action != MotionEvent.ACTION_MOVE) {
             motionAxisCount++
-            appendDebug("[MOTION#$motionCount] $act source=${ev.source} ${axes.joinToString(" ")}")
+            appendDebug("[MOTION#$motionAxisCount] $act source=${ev.source} ${axes.joinToString(" ")}")
         }
         return super.onGenericMotionEvent(ev)
     }
@@ -102,14 +121,15 @@ class MainActivity : AppCompatActivity() {
         keyCount++
         val btn = KeyMapperAccessibilityService.keyEventToButton(event)
         val action = if (event.action == KeyEvent.ACTION_DOWN) "DOWN" else "UP  "
-        val mapping = btn?.let { "-> ${it.buttonName}" } ?: "-> 非手柄按键"
-        appendDebug("[KEY#$keyCount] $action keyCode=${event.keyCode} source=${event.source} flags=${event.flags} $mapping")
+        val source = KeyMapperAccessibilityService.sourceToString(event.source)
+        val mapping = btn?.let { "-> ${it.buttonName}/${it.buttonId}" } ?: ""
+        appendDebug("[KEY#$keyCount] $action keyCode=${event.keyCode} src=$source flags=${event.flags} $mapping")
         return super.dispatchKeyEvent(event)
     }
 
     override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
         ev ?: return super.dispatchTouchEvent(null)
-        if (ev.action == MotionEvent.ACTION_MOVE) return super.dispatchTouchEvent(ev) // 忽略 move
+        if (ev.action == MotionEvent.ACTION_MOVE) return super.dispatchTouchEvent(ev)
         motionCount++
         val act = when (ev.action) {
             MotionEvent.ACTION_DOWN -> "DOWN"
@@ -121,18 +141,6 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchTouchEvent(ev)
     }
 
-    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        val btn = KeyMapperAccessibilityService.keyEventToButton(event ?: return super.onKeyDown(keyCode, event))
-        if (btn != null) appendDebug("[onKeyDown] keyCode=$keyCode -> ${btn.buttonName}")
-        return super.onKeyDown(keyCode, event)
-    }
-
-    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        val btn = KeyMapperAccessibilityService.keyEventToButton(event ?: return super.onKeyUp(keyCode, event))
-        if (btn != null) appendDebug("[onKeyUp] keyCode=$keyCode -> ${btn.buttonName}")
-        return super.onKeyUp(keyCode, event)
-    }
-
     private fun appendDebug(line: String) {
         debugLog.insert(0, line + "\n")
         if (debugLog.length > 4000) debugLog.setLength(4000)
@@ -140,10 +148,26 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             try {
                 tvDebugLog.text = log
-                tvDebugTitle.text = "🔍 调试面板（KEY=$keyCount TOUCH=$motionCount MOTION=$motionAxisCount）"
+                val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
+                tvDebugTitle.text = "🔍 诊断面板 (SDK=${Build.VERSION.SDK_INT}) [A11yKEY=$a11yCount ACTIVITY_KEY=$keyCount TOUCH=$motionCount MOTION=$motionAxisCount]"
             } catch (_: Exception) {}
         }
         Log.i(TAG, line)
+    }
+
+    private fun refreshDiagnosticPanel() {
+        val a11yRunning = KeyMapperAccessibilityService.isRunning()
+        val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
+        val info = "📱 Android SDK: ${Build.VERSION.SDK_INT}\n" +
+                   "♿ 无障碍服务: ${if (a11yRunning) "运行中 ✅" else "未运行 ❌"} (已捕获按键: $a11yCount)\n"
+        appendDebug("=== 诊断 ===")
+        appendDebug(info)
+    }
+
+    private fun dumpDevices() {
+        val info = KeyMapperAccessibilityService.enumerateInputDevices()
+        appendDebug(info)
+        Toast.makeText(this, "已刷新输入设备列表，看调试面板", Toast.LENGTH_SHORT).show()
     }
 
     private fun startEventCollectors() {
@@ -154,7 +178,6 @@ class MainActivity : AppCompatActivity() {
                 container.bluetoothController.buttonEvents.collect { event ->
                     try { container.mappingEngine.onButtonEvent(event) }
                     catch (e: Exception) { Log.e(TAG, "button dispatch failed", e) }
-                    Log.i(TAG, "buttonEvents flow: ${event.buttonName} pressed=${event.isPressed}")
                 }
             } catch (e: Exception) { Log.e(TAG, "buttonEvents collect failed", e) }
         }
@@ -210,7 +233,7 @@ class MainActivity : AppCompatActivity() {
             onSelect = { address ->
                 container.bluetoothController.selectDevice(address)
                 deviceAdapter.notifyDataSetChanged()
-                Toast.makeText(this, "已选中手柄，按手柄键看调试面板有没有反应", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "已选中手柄，按手柄键看调试面板", Toast.LENGTH_LONG).show()
             },
             onUnselect = {
                 container.bluetoothController.unselectDevice()
@@ -271,7 +294,6 @@ class MainActivity : AppCompatActivity() {
         root.addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
         setSupportActionBar(toolbar)
 
-        // ========== 无障碍服务状态条（K2ER 方案的核心） ==========
         val statusBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setGravity(android.view.Gravity.CENTER_VERTICAL)
@@ -286,19 +308,17 @@ class MainActivity : AppCompatActivity() {
         val btnGoA11y = AppCompatButton(this).apply {
             text = "去开启"
             setOnClickListener {
-                try {
-                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                } catch (e: Exception) {
-                    Toast.makeText(this@MainActivity, "请手动进入系统设置 → 无障碍 → KeyMapper", Toast.LENGTH_LONG).show()
-                }
+                try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+                catch (_: Exception) { Toast.makeText(this@MainActivity, "手动打开系统设置 → 无障碍", Toast.LENGTH_LONG).show() }
             }
         }
 
         val refreshStatusBar = Runnable {
-            val running = com.keymapper.app.service.KeyMapperAccessibilityService.isRunning()
+            val running = KeyMapperAccessibilityService.isRunning()
+            val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
             if (running) {
                 statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
-                tvA11yStatus.text = "✅ 无障碍服务已开启（按键捕获已激活）"
+                tvA11yStatus.text = "✅ 无障碍服务已开启 (A11yKEY=$a11yCount)"
                 tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
                 btnGoA11y.visibility = View.GONE
             } else {
@@ -312,7 +332,6 @@ class MainActivity : AppCompatActivity() {
         statusBar.addView(btnGoA11y)
 
         root.addView(statusBar)
-        // 每秒刷新一次状态
         root.post(object : Runnable {
             override fun run() {
                 refreshStatusBar.run()
@@ -326,11 +345,37 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(12), dp(12), dp(12), dp(12))
         }
 
+        val diagTitle = TextView(this).apply {
+            text = "🔧 诊断：SDK ${Build.VERSION.SDK_INT}"
+            textSize = 13f
+            setTextColor(Color.parseColor("#FF1565C0"))
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        content.addView(diagTitle)
+
+        val deviceBtnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val btnDumpDev = AppCompatButton(this).apply {
+            text = "🔌 列出输入设备"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { dumpDevices() }
+        }
+        val btnRefreshDiag = AppCompatButton(this).apply {
+            text = "🔄 刷新诊断"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
+            setOnClickListener { refreshDiagnosticPanel() }
+        }
+        deviceBtnRow.addView(btnDumpDev)
+        deviceBtnRow.addView(btnRefreshDiag)
+        content.addView(deviceBtnRow)
+
         val devicesTitle = TextView(this).apply {
             text = "已配对的蓝牙设备（点『选中』指定）"
             textSize = 16f
             setTextColor(Color.parseColor("#FF212121"))
             setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(12), 0, dp(4))
         }
         content.addView(devicesTitle)
 
@@ -355,14 +400,12 @@ class MainActivity : AppCompatActivity() {
 
         val addBtn = AppCompatButton(this).apply {
             text = "+ 添加新映射"
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, MappingConfigActivity::class.java))
-            }
+            setOnClickListener { startActivity(Intent(this@MainActivity, MappingConfigActivity::class.java)) }
         }
         content.addView(addBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         tvDebugTitle = TextView(this).apply {
-            text = "🔍 调试面板（KEY=$keyCount TOUCH=$motionCount）"
+            text = "🔍 诊断面板（加载中...）"
             textSize = 14f
             setTextColor(Color.parseColor("#FFD32F2F"))
             setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -371,20 +414,20 @@ class MainActivity : AppCompatActivity() {
         content.addView(tvDebugTitle)
 
         tvDebugLog = TextView(this).apply {
-            text = "清空后按手柄按键试试…\n如果这里仍然什么都没有，说明你的手柄事件被系统完全吞了，那我们需要换更激进的方案。\n"
+            text = "加载中... 点上面的『列出输入设备』和『刷新诊断』按钮\n然后按手柄按键看这里有什么变化\n"
             textSize = 11f
             setTextColor(Color.parseColor("#FF212121"))
             setBackgroundColor(Color.WHITE)
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        content.addView(tvDebugLog, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200)))
+        content.addView(tvDebugLog, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)))
 
         val clearDebugBtn = AppCompatButton(this).apply {
             text = "清除调试面板"
             setOnClickListener {
                 debugLog.clear()
                 tvDebugLog.text = ""
-                keyCount = 0; motionCount = 0
+                keyCount = 0; motionCount = 0; motionAxisCount = 0
             }
         }
         content.addView(clearDebugBtn)

@@ -87,13 +87,13 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
         mainHandler.removeCallbacks(statusRunnable)
     }
 
-    override fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?) {
+    override fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?, rawKeyCode: Int) {
         runOnUiThread {
             val device = deviceName ?: source
-            appendLog("♿ 无障碍服务 -> key=${event.buttonName}/${event.buttonId} pressed=${event.isPressed} src=$source dev=$device")
+            appendLog("♿ 无障碍服务 -> keyCode=$rawKeyCode key=${event.buttonName}/${event.buttonId} pressed=${event.isPressed} src=$source dev=$device")
             if (event.isPressed) {
                 lastButton = event
-                tvDetected.text = "已捕获：${event.buttonName} (${event.buttonId})\n设备: $device\n来源: 无障碍服务"
+                tvDetected.text = "已捕获：${event.buttonName} (${event.buttonId})\n原始keyCode=$rawKeyCode\n设备: $device\n来源: 无障碍服务"
                 btnConfirm.isEnabled = true
             }
         }

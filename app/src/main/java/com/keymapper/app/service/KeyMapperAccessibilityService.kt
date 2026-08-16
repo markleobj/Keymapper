@@ -4,13 +4,14 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Context
 import android.graphics.Path
+import android.hardware.input.InputManager
 import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
-import android.view.accessibility.AccessibilityEvent
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import com.keymapper.app.AppContainer
 import com.keymapper.app.model.HidButtonEvent
 import kotlin.math.max
@@ -19,7 +20,7 @@ import kotlin.math.min
 class KeyMapperAccessibilityService : AccessibilityService() {
 
     interface KeyListener {
-        fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?)
+        fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?, rawKeyCode: Int)
     }
 
     companion object {
@@ -34,6 +35,10 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         private var lastKeyTime: Long = 0
         fun getLastKeyTime(): Long = lastKeyTime
 
+        @Volatile
+        private var a11yKeyCount: Int = 0
+        fun getA11yKeyCount(): Int = a11yKeyCount
+
         private val keyListeners = mutableListOf<KeyListener>()
 
         fun addKeyListener(listener: KeyListener) {
@@ -46,6 +51,43 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             synchronized(keyListeners) {
                 keyListeners.remove(listener)
             }
+        }
+
+        fun enumerateInputDevices(): String {
+            val sb = StringBuilder()
+            sb.append("===== Input Devices =====\n")
+            try {
+                val ids = InputDevice.getDeviceIds()
+                for (id in ids) {
+                    val dev = InputDevice.getDevice(id) ?: continue
+                    val name = dev.name
+                    val sources = dev.sources
+                    val desc = deviceTypeDesc(sources)
+                    sb.append("  [$id] $name | sources=$sources ($desc)\n")
+                    val motionRanges = dev.motionRanges
+                    if (motionRanges != null && motionRanges.isNotEmpty()) {
+                        for (mr in motionRanges) {
+                            sb.append("    axis ${mr.axis} min=${"%.2f".format(mr.min)} max=${"%.2f".format(mr.max)}\n")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                sb.append("Error: ${e.message}\n")
+            }
+            return sb.toString()
+        }
+
+        private fun deviceTypeDesc(sources: Int): String {
+            val parts = mutableListOf<String>()
+            if (sources and InputDevice.SOURCE_TOUCHSCREEN != 0) parts.add("TOUCH")
+            if (sources and InputDevice.SOURCE_KEYBOARD != 0) parts.add("KEYBOARD")
+            if (sources and InputDevice.SOURCE_GAMEPAD != 0) parts.add("GAMEPAD")
+            if (sources and InputDevice.SOURCE_JOYSTICK != 0) parts.add("JOYSTICK")
+            if (sources and InputDevice.SOURCE_DPAD != 0) parts.add("DPAD")
+            if (sources and InputDevice.SOURCE_MOUSE != 0) parts.add("MOUSE")
+            if (sources and InputDevice.SOURCE_TOUCHPAD != 0) parts.add("TOUCHPAD")
+            if (sources and InputDevice.SOURCE_TRACKBALL != 0) parts.add("TRACKBALL")
+            return parts.joinToString("|").ifBlank { "NONE($sources)" }
         }
 
         private val KEYCODE_TO_BUTTON = mapOf(
@@ -103,6 +145,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             source and InputDevice.SOURCE_DPAD != 0 -> "DPAD"
             source and InputDevice.SOURCE_MOUSE != 0 -> "MOUSE"
             source and InputDevice.SOURCE_TOUCHPAD != 0 -> "TOUCHPAD"
+            source and InputDevice.SOURCE_TOUCHSCREEN != 0 -> "TOUCHSCREEN"
             else -> "SRC_$source"
         }
     }
@@ -117,6 +160,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         if (event == null) return false
         if (event.repeatCount > 0) return false
 
+        a11yKeyCount++
         lastKeyTime = System.currentTimeMillis()
         val btn = keyEventToButton(event)
         val source = sourceToString(event.source)
@@ -129,11 +173,11 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
         synchronized(keyListeners) {
             for (l in keyListeners.toList()) {
-                runCatching { l.onKeyCaptured(btn, source, deviceName) }
+                runCatching { l.onKeyCaptured(btn, source, deviceName, event.keyCode) }
             }
         }
 
-        Log.i(TAG, "onKeyEvent: keyCode=${event.keyCode} action=${event.action} src=$source device=$deviceName -> ${btn.buttonName}/${btn.buttonId}")
+        Log.i(TAG, "onKeyEvent#$a11yKeyCount: keyCode=${event.keyCode} action=${event.action} src=$source device=$deviceName -> ${btn.buttonName}/${btn.buttonId}")
         return false
     }
 
@@ -151,7 +195,9 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         }
         screenWidth = metrics.width()
         screenHeight = metrics.height()
-        Log.i(TAG, "✅ AccessibilityService connected ${screenWidth}x${screenHeight}, onKeyEvent will receive gamepad keys")
+
+        Log.i(TAG, "✅ AccessibilityService connected ${screenWidth}x${screenHeight}, SDK=${Build.VERSION.SDK_INT}")
+        Log.i(TAG, "📋 ${enumerateInputDevices()}")
     }
 
     override fun onDestroy() {
