@@ -197,6 +197,24 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         screenHeight = metrics.height()
 
         Log.i(TAG, "✅ AccessibilityService connected ${screenWidth}x${screenHeight}, SDK=${Build.VERSION.SDK_INT}")
+
+        try {
+            val info = serviceInfo
+            val oldFlags = info.flags
+            val FLAG_REQUEST_FILTER_KEY_EVENTS = try {
+                android.accessibilityservice.AccessibilityServiceInfo::class.java.getField("FLAG_REQUEST_FILTER_KEY_EVENTS").getInt(null)
+            } catch (_: Exception) { 0x00000200 }
+            val FLAG_SEND_MOTION_EVENTS = try {
+                android.accessibilityservice.AccessibilityServiceInfo::class.java.getField("FLAG_SEND_MOTION_EVENTS").getInt(null)
+            } catch (_: Exception) { 0x00000400 }
+
+            info.flags = oldFlags or FLAG_REQUEST_FILTER_KEY_EVENTS or FLAG_SEND_MOTION_EVENTS
+            val result = setServiceInfo(info)
+            Log.i(TAG, "🔧 setServiceInfo oldFlags=0x${oldFlags.toString(16)} newFlags=0x${info.flags.toString(16)} result=$result")
+        } catch (e: Exception) {
+            Log.w(TAG, "setServiceInfo failed: ${e.message}", e)
+        }
+
         Log.i(TAG, "📋 ${enumerateInputDevices()}")
     }
 
