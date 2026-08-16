@@ -36,6 +36,26 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         private var a11yKeyCount: Int = 0
         fun getA11yKeyCount(): Int = a11yKeyCount
 
+        @Volatile
+        private var a11yMotionCount: Int = 0
+        fun getA11yMotionCount(): Int = a11yMotionCount
+
+        @Volatile
+        private var flagsSummary: String = ""
+        fun getFlagsSummary() = flagsSummary
+
+        @Volatile
+        private var inputDeviceSummary: String = ""
+        fun getInputDeviceSummary() = inputDeviceSummary
+
+        @Volatile
+        private var imeStatus: String = ""
+        fun getImeStatus() = imeStatus
+
+        @Volatile
+        private var lastKeyLog: String = ""
+        fun getLastKeyLog() = lastKeyLog
+
         private val keyListeners = mutableListOf<KeyListener>()
 
         fun addKeyListener(listener: KeyListener) {
@@ -76,15 +96,17 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             return HidButtonEvent(pair.first, pair.second, event.action == KeyEvent.ACTION_DOWN)
         }
 
-        fun sourceToString(source: Int): String = when {
-            source and InputDevice.SOURCE_GAMEPAD != 0 -> "GAMEPAD"
-            source and InputDevice.SOURCE_JOYSTICK != 0 -> "JOYSTICK"
-            source and InputDevice.SOURCE_KEYBOARD != 0 -> "KEYBOARD"
-            source and InputDevice.SOURCE_DPAD != 0 -> "DPAD"
-            source and InputDevice.SOURCE_MOUSE != 0 -> "MOUSE"
-            source and InputDevice.SOURCE_TOUCHPAD != 0 -> "TOUCHPAD"
-            source and InputDevice.SOURCE_TOUCHSCREEN != 0 -> "TOUCHSCREEN"
-            else -> "SRC_$source"
+        fun sourceToString(source: Int): String {
+            val parts = mutableListOf<String>()
+            if (source and InputDevice.SOURCE_GAMEPAD != 0) parts.add("GAMEPAD")
+            if (source and InputDevice.SOURCE_JOYSTICK != 0) parts.add("JOYSTICK")
+            if (source and InputDevice.SOURCE_KEYBOARD != 0) parts.add("KEYBOARD")
+            if (source and InputDevice.SOURCE_DPAD != 0) parts.add("DPAD")
+            if (source and InputDevice.SOURCE_MOUSE != 0) parts.add("MOUSE")
+            if (source and InputDevice.SOURCE_TOUCHPAD != 0) parts.add("TOUCHPAD")
+            if (source and InputDevice.SOURCE_TOUCHSCREEN != 0) parts.add("TOUCHSCREEN")
+            if (parts.isEmpty()) parts.add("SRC_$source")
+            return parts.joinToString("|")
         }
     }
 
@@ -107,37 +129,70 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         screenWidth = metrics.width()
         screenHeight = metrics.height()
 
+        // ✅ 关键：运行时重新设置所有 flags
+        // 某些 Android 版本 / OEM ROM 会忽略 XML 里的 flagRequestFilterKeyEvents，
+        // 必须在 onServiceConnected 里主动设置才能激活按键过滤。
+        val info = serviceInfo
+        info.flags = (info.flags
+                or 1  // FLAG_DEFAULT
+                or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+                or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+                or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS)
+        info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
+        info.feedbackType = AccessibilityServiceInfo.FEEDBACK_ALL_MASK
+        info.notificationTimeout = 100
+        serviceInfo = info
+
         val flags = serviceInfo.flags
-        val hasFlagFilterKey = flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
-        val hasFlagImeEditor = flags and 0x00010000 != 0
+        val hasFilterKey = flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
+        val hasRetrieveWin = flags and AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS != 0
+
+        // flagInputMethodEditor 是隐藏常量 0x10000，只能靠 XML 或反射设置
+        val FLAG_INPUT_METHOD_EDITOR = 0x00010000
+        val hasImeEditor = flags and FLAG_INPUT_METHOD_EDITOR != 0
+
+        flagsSummary = "flags=0x${flags.toString(16)} " +
+                "[filterKey=$hasFilterKey retrieveWin=$hasRetrieveWin imeEditor=$hasImeEditor]"
         Log.i(TAG, "✅ K2ER Service connected ${screenWidth}x${screenHeight}, SDK=${Build.VERSION.SDK_INT}")
-        Log.i(TAG, "📋 flags=0x${flags.toString(16)} filterKey=$hasFlagFilterKey imeEditor=$hasFlagImeEditor")
+        Log.i(TAG, "📋 $flagsSummary")
+
+        // 列出所有输入设备（诊断用）
+        enumerateInputDevices()
+    }
+
+    private fun enumerateInputDevices() {
+        val ids = InputDevice.getDeviceIds()
+        val sb = StringBuilder()
+        sb.append("共 ${ids.size} 个输入设备:\n")
+        var gamepadCount = 0
+        var keyboardCount = 0
+        for (id in ids) {
+            val dev = InputDevice.getDevice(id) ?: continue
+            val name = dev.name
+            val sources = dev.sources
+            val srcStr = sourceToString(sources)
+            if (sources and InputDevice.SOURCE_GAMEPAD != 0) gamepadCount++
+            if (sources and InputDevice.SOURCE_KEYBOARD != 0) keyboardCount++
+            sb.append("  [id=$id] name=\"$name\" sources=0x${sources.toString(16)} [$srcStr]\n")
+        }
+        sb.append("→ Gamepad数=$gamepadCount Keyboard数=$keyboardCount")
+        inputDeviceSummary = sb.toString()
+        Log.i(TAG, "🔌 $inputDeviceSummary")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
     override fun onInterrupt() {}
 
-    /**
-     * K2ER 核心机制：Android 13+ 通过 flagInputMethodEditor 让 AccessibilityService 内部
-     * 持有一个 InputMethod 通道，从而可以在不切换输入法的情况下接收按键事件。
-     * 必须调用 super.onCreateInputMethod() 让系统正确初始化，绝不能用反射自己构造！
-     */
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
     override fun onCreateInputMethod(): InputMethod {
         val result = super.onCreateInputMethod()
         imeBridge = result
-        Log.i(TAG, "✅ onCreateInputMethod 通过 super() 成功")
+        imeStatus = "✅ onCreateInputMethod 成功 (bridge=${result != null})"
+        Log.i(TAG, imeStatus)
         return result
     }
 
-    /**
-     * K2ER 按键拦截入口。只要 XML 配置了 flagRequestFilterKeyEvents，
-     * 且 onCreateInputMethod 正确返回了非 null 实例，系统就会把所有按键事件
-     * 通过这里回调给我们 —— 不需要 Activity 有焦点，也不需要切输入法。
-     *
-     * 返回 false = 不消费事件，让手柄按键继续透传到游戏/系统。
-     */
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
         if (event.repeatCount > 0) return false
@@ -147,8 +202,18 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         val source = sourceToString(event.source)
         val deviceName = try { event.device?.name } catch (_: Exception) { null }
 
-        runCatching { AppContainer.require() }.getOrNull()?.let {
+        val container = runCatching { AppContainer.require() }.getOrNull()
+        container?.let {
             runCatching { it.bluetoothController.dispatchAccessibilityKey(btn) }
+            val engine = runCatching { it.mappingEngine }.getOrNull()
+            if (engine != null && engine.isEventBlocked(btn)) {
+                Log.i(TAG, "🚫 拦截按键 ${btn.buttonName} (blocked=true)")
+                if (event.action == KeyEvent.ACTION_DOWN) engine.onButtonEvent(btn)
+                return true
+            }
+            if (engine != null && event.action == KeyEvent.ACTION_DOWN) {
+                engine.onButtonEvent(btn)
+            }
         }
 
         synchronized(keyListeners) {
@@ -157,8 +222,9 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             }
         }
 
-        if (a11yKeyCount <= 5 || event.action == KeyEvent.ACTION_DOWN) {
-            Log.i(TAG, "🔑 KEY#$a11yKeyCount: kc=${event.keyCode} act=${event.action} src=$source dev=$deviceName -> ${btn.buttonName}/${btn.buttonId}")
+        lastKeyLog = "KEY#$a11yKeyCount kc=${event.keyCode} act=${event.action} src=$source dev=${deviceName ?: "?"} -> ${btn.buttonName}/${btn.buttonId}"
+        if (a11yKeyCount <= 10 || event.action == KeyEvent.ACTION_DOWN) {
+            Log.i(TAG, "🔑 $lastKeyLog")
         }
         return false
     }

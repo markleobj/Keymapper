@@ -107,6 +107,91 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
         }
     }
 
+    private var touchStartX: Float = 0f
+    private var touchStartY: Float = 0f
+    private var touchDevName: String = ""
+    private var touchMoved: Boolean = false
+
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        ev ?: return super.dispatchTouchEvent(null)
+        val dev = ev.device
+        val devName = dev?.name ?: "(无设备)"
+        val source = KeyMapperAccessibilityService.sourceToString(ev.source)
+
+        val isControllerTouch = devName.contains("R1S", true)
+                || devName.contains("Gamepad", true)
+                || devName.contains("Controller", true)
+                || source.contains("GAMEPAD")
+
+        if (!isControllerTouch) return super.dispatchTouchEvent(ev)
+
+        val rawX = ev.rawX
+        val rawY = ev.rawY
+
+        when (ev.action) {
+            MotionEvent.ACTION_DOWN -> {
+                touchStartX = rawX
+                touchStartY = rawY
+                touchDevName = devName
+                touchMoved = false
+                appendLog("🎮 DOWN dev=\"$devName\" src=$source raw=(${rawX.toInt()},${rawY.toInt()})")
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = kotlin.math.abs(rawX - touchStartX)
+                val dy = kotlin.math.abs(rawY - touchStartY)
+                if (dx > 30f || dy > 30f) touchMoved = true
+            }
+            MotionEvent.ACTION_UP -> {
+                val endX = rawX
+                val endY = rawY
+                val dx = endX - touchStartX
+                val dy = endY - touchStartY
+                val moved = kotlin.math.abs(dx) > 30f || kotlin.math.abs(dy) > 30f || touchMoved
+
+                appendLog("🎮 UP dev=\"$devName\" start=(${touchStartX.toInt()},${touchStartY.toInt()}) end=(${endX.toInt()},${endY.toInt()}) dx=${dx.toInt()} dy=${dy.toInt()} moved=$moved")
+
+                val button = if (moved) {
+                    // DPAD 方向键 - 看最大偏移方向
+                    when {
+                        kotlin.math.abs(dx) > kotlin.math.abs(dy) ->
+                            if (dx > 0) "DPAD_RIGHT" else "DPAD_LEFT"
+                        kotlin.math.abs(dy) > 30f ->
+                            if (dy > 0) "DPAD_DOWN" else "DPAD_UP"
+                        else -> inferStaticButton(touchStartX, touchStartY)
+                    }
+                } else {
+                    // 单点触摸 - ABXY 或其他
+                    inferStaticButton(touchStartX, touchStartY)
+                }
+
+                appendLog("🎯 判定按键: $button")
+                val hidBtn = HidButtonEvent(button, button, true)
+                lastButton = hidBtn
+                tvDetected.text = "已捕获：$button\n设备: $devName\n来源: 手柄触摸拦截"
+                btnConfirm.isEnabled = true
+            }
+        }
+        return true
+    }
+
+    private fun inferStaticButton(x: Float, y: Float): String {
+        // R1S 范围 ABS_X 0~1000, ABS_Y 0~1000, 中心(500,500)
+        val rng = 1000f
+        val cx = rng / 2f; val cy = rng / 2f
+        val nx = (x - cx) / cx  // -1..1
+        val ny = (y - cy) / cy  // -1..1
+        appendLog("  📊 静态按钮归一化: nx=${"%.2f".format(nx)} ny=${"%.2f".format(ny)} raw=(${x.toInt()},${y.toInt()})")
+
+        return when {
+            nx in -0.2..0.2 && ny in -0.2..0.2 -> "BTN_A"
+            nx > 0.2 && ny in -0.3..0.3 -> "BTN_B"
+            nx in -0.3..0.3 && ny > 0.2 -> "BTN_X"
+            nx in -0.3..0.3 && ny < -0.2 -> "BTN_Y"
+            nx < -0.2 && ny in -0.3..0.3 -> "BTN_START"
+            else -> "BTN_${x.toInt()}_${y.toInt()}"
+        }
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
         event ?: return super.dispatchKeyEvent(null)
         if (event.repeatCount > 0) return super.dispatchKeyEvent(event)

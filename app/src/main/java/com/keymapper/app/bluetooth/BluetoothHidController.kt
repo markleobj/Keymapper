@@ -126,6 +126,11 @@ class BluetoothHidController(private val context: Context) {
         _buttonEvents.tryEmit(event)
     }
 
+    fun dispatchAccessibilityMotion(buttonId: String) {
+        // Motion 事件只在 ACTION_DOWN 时派发一次，按钮按下 = pressed
+        _buttonEvents.tryEmit(HidButtonEvent(buttonId, buttonId, true))
+    }
+
     fun selectDevice(address: String) {
         selectedAddress = address
         prefs.edit().putString("selected_address", address).apply()

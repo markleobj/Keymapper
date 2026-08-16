@@ -84,8 +84,17 @@ class MappingAdapter(
     ) : RecyclerView.ViewHolder(itemView) {
 
         fun bind(config: MappingConfig) {
-            tvButton.text = config.button
-            tvAction.text = "${config.actionType.name} → (${"%.2f".format(config.targetX)}, ${"%.2f".format(config.targetY)})"
+            val displayTitle = config.name.ifBlank { config.button }
+            tvButton.text = displayTitle
+            val typeCn = when (config.actionType) {
+                com.keymapper.app.model.ActionType.TAP -> "点击"
+                com.keymapper.app.model.ActionType.LONG_PRESS -> "长按"
+                com.keymapper.app.model.ActionType.SWIPE -> "滑动"
+                com.keymapper.app.model.ActionType.MOUSE_MOVE -> "鼠标模拟"
+                com.keymapper.app.model.ActionType.COMBO -> "组合动作(${config.steps.size}步)"
+                com.keymapper.app.model.ActionType.DO_NOTHING -> "只屏蔽"
+            }
+            tvAction.text = "${config.button} · $typeCn · (${"%.2f".format(config.targetX)}, ${"%.2f".format(config.targetY)})"
 
             switchEnabled.setOnCheckedChangeListener(null)
             switchEnabled.isChecked = config.enabled
