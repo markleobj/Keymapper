@@ -348,25 +348,83 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             val running = KeyMapperAccessibilityService.isRunning()
             val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
             val a11yMotion = KeyMapperAccessibilityService.getA11yMotionCount()
+            val imeKey = com.keymapper.app.inputmethod.KeyMapperImeService.getImeKeyCount()
+            val isImeEnabled = isKeyMapperImeEnabled()
+            val isImeActive = isKeyMapperImeActive()
             if (running) {
                 statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
-                tvA11yStatus.text = "✅ 无障碍服务已开启 (A11yKEY=$a11yKey A11yMOTION=$a11yMotion)"
+                tvA11yStatus.text = "✅ 无障碍已开 | ⌨️IME=$imeKey ${if (isImeActive) "✅激活中" else if (isImeEnabled) "已启用但未选中" else "❌未启用"} | A11y=$a11yKey"
                 tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
                 btnGoA11y.visibility = View.GONE
             } else {
                 statusBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
-                tvA11yStatus.text = "⚠️ 无障碍服务未开启！这是捕获手柄按键的关键"
+                tvA11yStatus.text = "⚠️ 无障碍未开！这是模拟点击的关键"
                 tvA11yStatus.setTextColor(Color.parseColor("#FFC62828"))
                 btnGoA11y.visibility = View.VISIBLE
             }
         }
-        statusBar.addView(tvA11yStatus, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        statusBar.addView(btnGoA11y)
+
+        val imeBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setGravity(android.view.Gravity.CENTER_VERTICAL)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            setBackgroundColor(Color.parseColor("#FFF3E5F5"))
+        }
+        val tvImeStatus = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.parseColor("#FF6A1B9A"))
+        }
+        val btnImeSettings = AppCompatButton(this).apply {
+            text = "去设置"
+            textSize = 11f
+            setOnClickListener {
+                try { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+                catch (_: Exception) { Toast.makeText(this@MainActivity, "手动打开系统设置 → 系统 → 语言和输入法", Toast.LENGTH_LONG).show() }
+            }
+        }
+        imeBar.addView(tvImeStatus, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        imeBar.addView(btnImeSettings)
+        root.addView(imeBar)
 
         root.addView(statusBar)
         root.post(object : Runnable {
             override fun run() {
                 refreshStatusBar.run()
+                val imeEnabled = isKeyMapperImeEnabled()
+                val imeActive = isKeyMapperImeActive()
+                val imeKey2 = com.keymapper.app.inputmethod.KeyMapperImeService.getImeKeyCount()
+                if (imeActive) {
+                    imeBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
+                    tvImeStatus.text = "✅ KeyMapper 输入法已激活（捕获按键: $imeKey2）"
+                    tvImeStatus.setTextColor(Color.parseColor("#FF2E7D32"))
+                    btnImeSettings.text = "切换输入法"
+                } else if (imeEnabled) {
+                    imeBar.setBackgroundColor(Color.parseColor("#FFFDE7"))
+                    tvImeStatus.text = "⚠️ KeyMapper 输入法已启用但未选中（点切换输入法后选 KeyMapper）"
+                    tvImeStatus.setTextColor(Color.parseColor("#F57F17"))
+                    btnImeSettings.text = "切换输入法"
+                } else {
+                    imeBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
+                    tvImeStatus.text = "❌ KeyMapper 输入法未启用 — 手柄按键可能捕获不到！点『去设置』→ 启用 KeyMapper"
+                    tvImeStatus.setTextColor(Color.parseColor("#FFC62828"))
+                    btnImeSettings.text = "去设置"
+                }
+                if (btnImeSettings.text == "切换输入法") {
+                    btnImeSettings.setOnClickListener {
+                        try {
+                            val im = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                            im.showInputMethodPicker()
+                        } catch (_: Exception) {
+                            try { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+                            catch (_: Exception) {}
+                        }
+                    }
+                } else {
+                    btnImeSettings.setOnClickListener {
+                        try { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+                        catch (_: Exception) {}
+                    }
+                }
                 root.postDelayed(this, 1500)
             }
         })
@@ -476,6 +534,22 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    private fun isKeyMapperImeEnabled(): Boolean {
+        return try {
+            val im = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            val enabled = im.enabledInputMethodList
+            enabled.any { it.packageName == packageName }
+        } catch (_: Exception) { false }
+    }
+
+    private fun isKeyMapperImeActive(): Boolean {
+        return try {
+            val im = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            val active = im.currentInputMethodInfo
+            active?.packageName == packageName
+        } catch (_: Exception) { false }
+    }
 
     companion object { private const val TAG = "MainActivity" }
 }

@@ -41,6 +41,8 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
         private val keyListeners = mutableListOf<KeyListener>()
 
+        fun getKeyListeners(): MutableList<KeyListener> = keyListeners
+
         fun addKeyListener(listener: KeyListener) {
             synchronized(keyListeners) {
                 if (!keyListeners.contains(listener)) keyListeners.add(listener)
