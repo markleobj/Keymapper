@@ -30,7 +30,8 @@ data class MappingConfig(
     val enabled: Boolean = true,
     val deviceAddress: String? = null,
     val blocked: Boolean = true,
-    val steps: List<ActionStep> = emptyList()
+    val steps: List<ActionStep> = emptyList(),
+    val targetPackage: String? = null
 )
 
 data class HidButtonEvent(

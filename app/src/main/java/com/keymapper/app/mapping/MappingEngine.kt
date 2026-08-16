@@ -62,11 +62,24 @@ class MappingEngine(
                dev.contains(mapping.deviceAddress, ignoreCase = true)
     }
 
+    private fun matchesPackage(mapping: MappingConfig): Boolean {
+        val target = mapping.targetPackage
+        if (target.isNullOrBlank()) return true
+        val current = KeyMapperAccessibilityService.currentPackageName ?: return false
+        return current == target
+    }
+
+    private fun findMappingFor(event: HidButtonEvent): MappingConfig? {
+        return activeMappings.firstOrNull {
+            (it.button == event.buttonId || it.button == event.buttonName)
+                && matchesDevice(event, it)
+                && matchesPackage(it)
+        }
+    }
+
     fun isEventBlocked(event: HidButtonEvent): Boolean {
         if (!enabled) return false
-        val mapping = activeMappings.firstOrNull {
-            (it.button == event.buttonId || it.button == event.buttonName) && matchesDevice(event, it)
-        } ?: return false
+        val mapping = findMappingFor(event) ?: return false
         return mapping.blocked
     }
 
@@ -80,15 +93,19 @@ class MappingEngine(
 
         buttonStateMap[event.buttonId] = event.isPressed
 
-        val mapping = activeMappings.firstOrNull {
-            (it.button == event.buttonId || it.button == event.buttonName) && matchesDevice(event, it)
-        } ?: run {
-            debugExecMsg = "⚠️ 无匹配映射 (已配置: ${activeMappings.map { it.button }})"
-            Log.d(TAG, "按键 ${event.buttonId} 没有匹配的映射 (已配置: ${activeMappings.map { it.button }})")
+        val mapping = findMappingFor(event) ?: run {
+            val pkgMismatch = activeMappings.filter {
+                (it.button == event.buttonId || it.button == event.buttonName) && matchesDevice(event, it)
+            }.any { !matchesPackage(it) }
+            if (pkgMismatch) {
+                debugExecMsg = "📱 当前APP不匹配 (前台: ${KeyMapperAccessibilityService.currentPackageName ?: "?"})"
+            } else {
+                debugExecMsg = "⚠️ 无匹配映射"
+            }
             return
         }
 
-        debugExecMsg = "✅ 匹配 ${mapping.button} → ${mapping.actionType.name}"
+        debugExecMsg = "✅ 匹配 ${mapping.button} → ${mapping.actionType.name} [${mapping.targetPackage ?: "全局"}]"
         Log.i(TAG, "🎯 触发: ${mapping.button} → ${mapping.actionType}")
 
         when (mapping.actionType) {

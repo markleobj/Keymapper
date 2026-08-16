@@ -25,6 +25,7 @@ class CoordinatePickerActivity : AppCompatActivity() {
         private const val TAG = "CoordPickerActivity"
         const val EXTRA_PICKED_X = "picked_x"
         const val EXTRA_PICKED_Y = "picked_y"
+        const val EXTRA_PICKED_PACKAGE = "picked_package"
         private const val OVERLAY_REQUEST_CODE = 300
     }
 
@@ -95,10 +96,12 @@ class CoordinatePickerActivity : AppCompatActivity() {
                     CoordinatePickerOverlay.ACTION_PICK_RESULT -> {
                         val nx = intent.getFloatExtra(CoordinatePickerOverlay.EXTRA_X, 0f)
                         val ny = intent.getFloatExtra(CoordinatePickerOverlay.EXTRA_Y, 0f)
-                        Log.i(TAG, "pick result: ($nx, $ny)")
+                        val pkg = intent.getStringExtra(CoordinatePickerOverlay.EXTRA_PACKAGE)
+                        Log.i(TAG, "pick result: ($nx, $ny) pkg=$pkg")
                         val result = Intent().apply {
                             putExtra(EXTRA_PICKED_X, nx)
                             putExtra(EXTRA_PICKED_Y, ny)
+                            putExtra(EXTRA_PICKED_PACKAGE, pkg)
                         }
                         setResult(Activity.RESULT_OK, result)
                         finish()

@@ -25,6 +25,7 @@ class CoordinatePickerOverlay(private val context: Context) {
         const val ACTION_PICK_RESULT = "com.keymapper.app.COORD_PICK_RESULT"
         const val EXTRA_X = "x"
         const val EXTRA_Y = "y"
+        const val EXTRA_PACKAGE = "pkg"
         const val ACTION_PICK_CANCEL = "com.keymapper.app.COORD_PICK_CANCEL"
 
         @Volatile
@@ -106,9 +107,11 @@ class CoordinatePickerOverlay(private val context: Context) {
                     val ny = (rawY / screenH).coerceIn(0f, 1f)
                     Log.i(TAG, "picked: raw=($rawX,$rawY) norm=($nx,$ny)")
 
+                    val pkg = KeyMapperAccessibilityService.currentPackageName
                     val intent = Intent(ACTION_PICK_RESULT).apply {
                         putExtra(EXTRA_X, nx)
                         putExtra(EXTRA_Y, ny)
+                        putExtra(EXTRA_PACKAGE, pkg)
                     }
                     LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
                     sendGlobalBroadcast(intent)

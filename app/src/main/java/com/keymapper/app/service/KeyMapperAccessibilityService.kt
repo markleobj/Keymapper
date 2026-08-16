@@ -62,6 +62,16 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         private var lastKeyLog: String = ""
         fun getLastKeyLog() = lastKeyLog
 
+        @Volatile
+        @JvmStatic
+        var currentPackageName: String? = null
+            private set
+
+        @Volatile
+        @JvmStatic
+        var currentPackageLabel: String? = null
+            private set
+
         private val keyListeners = mutableListOf<KeyListener>()
 
         fun addKeyListener(listener: KeyListener) {
@@ -231,7 +241,20 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         Log.i(TAG, "🔌 $inputDeviceSummary")
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            val pkg = event.packageName?.toString() ?: return
+            if (pkg == currentPackageName) return
+            currentPackageName = pkg
+            currentPackageLabel = runCatching {
+                val pm = packageManager
+                val info = pm.getApplicationInfo(pkg, 0)
+                pm.getApplicationLabel(info).toString()
+            }.getOrNull()
+            Log.i(TAG, "📱 前台 APP: $pkg (${currentPackageLabel ?: "?"})")
+        }
+    }
 
     override fun onInterrupt() {}
 

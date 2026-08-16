@@ -189,7 +189,11 @@ class FloatingWindowManager(private val context: Context) {
                 val tv = panelView?.findViewById<TextView>(R.id.tv_debug) ?: break
                 val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
                 val engineSummary = com.keymapper.app.mapping.MappingEngine.getDebugSummary()
+                val currentPkg = KeyMapperAccessibilityService.currentPackageName ?: "?"
+                val currentLabel = KeyMapperAccessibilityService.currentPackageLabel
+                val pkgDisplay = if (currentLabel != null) "$currentLabel($currentPkg)" else currentPkg
                 val combined = buildString {
+                    appendLine("📱 当前APP: $pkgDisplay")
                     appendLine("♿ 无障碍按键捕获: $a11yCount")
                     append(engineSummary)
                 }
@@ -260,27 +264,47 @@ class FloatingWindowManager(private val context: Context) {
             return
         }
 
+        val currentPkg = KeyMapperAccessibilityService.currentPackageName
         val sorted = mappings.sortedByDescending { it.enabled }
         sorted.forEach { cfg ->
+            val pkg = cfg.targetPackage
+            val pkgMatch = pkg.isNullOrBlank() || pkg == currentPkg
+            val isActive = cfg.enabled && pkgMatch
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(8), dp(10), dp(8), dp(10))
-                setBackgroundColor(if (cfg.enabled) 0xFFF1F8E9.toInt() else 0xFFFAFAFA.toInt())
+                val bgRes = when {
+                    isActive -> 0xFFE8F5E9.toInt()
+                    cfg.enabled -> 0xFFF1F8E9.toInt()
+                    else -> 0xFFFAFAFA.toInt()
+                }
+                setBackgroundColor(bgRes)
             }
             val indicator = TextView(context).apply {
-                text = if (cfg.enabled) "🟢" else "⚪"
+                text = when {
+                    isActive -> "🟢"
+                    cfg.enabled -> "🔵"
+                    else -> "⚪"
+                }
                 textSize = 14f
                 width = dp(28)
             }
+            val pkgTag = if (pkg.isNullOrBlank()) "" else pkg.substringAfterLast('.')
             val label = TextView(context).apply {
                 text = buildString {
                     append(cfg.name.ifBlank { cfg.button })
                     append("\n")
                     append(cfg.button).append(" · ").append(actionTypeCn(cfg.actionType))
+                    if (pkg.isNullOrBlank()) {
+                        append(" · 全局")
+                    } else {
+                        append(" · ").append(pkgTag)
+                        if (isActive) append(" ✅") else append(" ❌")
+                    }
                 }
-                textSize = 12f
-                setTextColor(if (cfg.enabled) 0xFF2E7D32.toInt() else 0xFF9E9E9E.toInt())
+                textSize = 11f
+                setTextColor(if (isActive) 0xFF1B5E20.toInt() else if (cfg.enabled) 0xFF616161.toInt() else 0xFF9E9E9E.toInt())
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
             val btnToggle = AppCompatButton(context).apply {

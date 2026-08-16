@@ -54,8 +54,10 @@ class MappingConfigActivity : AppCompatActivity() {
     private var longPressDuration: Long = 500L
     private var blocked: Boolean = true
     private var configName: String = ""
-    private val comboSteps = mutableListOf<ActionStep>()
+    private var comboSteps = mutableListOf<ActionStep>()
     private var pendingPickStepIndex: Int = -1
+    private var selectedTargetPackage: String? = null
+    private var tvTargetPackageHint: TextView? = null
 
     private val buttonPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
@@ -75,8 +77,11 @@ class MappingConfigActivity : AppCompatActivity() {
         if (result.resultCode == RESULT_OK) {
             val nx = result.data?.getFloatExtra(CoordinatePickerActivity.EXTRA_PICKED_X, 0f) ?: 0f
             val ny = result.data?.getFloatExtra(CoordinatePickerActivity.EXTRA_PICKED_Y, 0f) ?: 0f
-            Log.i("MappingConfig", "coordPicker result: ($nx, $ny) step=$pendingPickStepIndex")
+            val pkg = result.data?.getStringExtra(CoordinatePickerActivity.EXTRA_PICKED_PACKAGE)
+            selectedTargetPackage = pkg
+            Log.i("MappingConfig", "coordPicker result: ($nx, $ny) pkg=$pkg step=$pendingPickStepIndex")
             Toast.makeText(this, String.format("已拾取 X=%.2f Y=%.2f", nx, ny), Toast.LENGTH_SHORT).show()
+            refreshTargetPackageHint()
             if (pendingPickStepIndex >= 0 && pendingPickStepIndex < comboSteps.size) {
                 comboSteps[pendingPickStepIndex] = comboSteps[pendingPickStepIndex].copy(targetX = nx, targetY = ny)
                 renderComboSteps()
@@ -146,6 +151,7 @@ class MappingConfigActivity : AppCompatActivity() {
         durationGroup.visibility = View.GONE
         comboGroup.visibility = View.GONE
         targetGroup.visibility = View.VISIBLE
+        refreshTargetPackageHint()
     }
 
     private fun setupListeners() {
@@ -175,6 +181,7 @@ class MappingConfigActivity : AppCompatActivity() {
         selectedActionType = config.actionType
         longPressDuration = config.duration
         blocked = config.blocked
+        selectedTargetPackage = config.targetPackage
         comboSteps.clear()
         comboSteps.addAll(config.steps)
         renderComboSteps()
@@ -187,6 +194,7 @@ class MappingConfigActivity : AppCompatActivity() {
         swBlocked.isChecked = blocked
         val idx = ActionType.values().indexOf(config.actionType)
         if (idx >= 0) spinnerAction.setSelection(idx)
+        refreshTargetPackageHint()
     }
 
     private fun save() {
@@ -217,7 +225,8 @@ class MappingConfigActivity : AppCompatActivity() {
             duration = longPressDuration,
             enabled = true,
             blocked = blocked,
-            steps = if (selectedActionType == ActionType.COMBO) comboSteps.toList() else emptyList()
+            steps = if (selectedActionType == ActionType.COMBO) comboSteps.toList() else emptyList(),
+            targetPackage = selectedTargetPackage
         )
         lifecycleScope.launch(Dispatchers.Default) {
             try {
@@ -428,6 +437,12 @@ class MappingConfigActivity : AppCompatActivity() {
         coordRow.addView(etTargetY)
         coordRow.addView(btnPickCoord)
         targetGroup.addView(coordRow)
+        tvTargetPackageHint = TextView(this).apply {
+            textSize = 12f
+            setTextColor(Color.parseColor("#FF3F51B5"))
+            setPadding(0, dp(6), 0, dp(2))
+        }
+        targetGroup.addView(tvTargetPackageHint)
         content.addView(targetGroup)
 
         durationGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -489,6 +504,16 @@ class MappingConfigActivity : AppCompatActivity() {
         textSize = 14f
         setTextColor(Color.parseColor("#FF666666"))
         setPadding(0, dp(12), 0, dp(2))
+    }
+
+    private fun refreshTargetPackageHint() {
+        val hint = tvTargetPackageHint ?: return
+        val pkg = selectedTargetPackage
+        hint.text = if (pkg.isNullOrBlank()) {
+            "💡 未绑定：请点『拾取』回到目标 app 上取坐标"
+        } else {
+            "🎯 已绑定 APP：$pkg"
+        }
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
