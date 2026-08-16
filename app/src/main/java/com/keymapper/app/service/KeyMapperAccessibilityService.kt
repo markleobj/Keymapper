@@ -7,8 +7,13 @@ import android.graphics.Path
 import android.os.Build
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.WindowManager
+import com.keymapper.app.AppContainer
+import com.keymapper.app.model.HidButtonEvent
 import kotlin.math.max
 import kotlin.math.min
 
@@ -20,6 +25,54 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             private set
 
         fun isRunning(): Boolean = instance != null
+
+        private val KEYCODE_TO_BUTTON = mapOf(
+            KeyEvent.KEYCODE_BUTTON_A      to Pair("BTN_A",      "A"),
+            KeyEvent.KEYCODE_BUTTON_B      to Pair("BTN_B",      "B"),
+            KeyEvent.KEYCODE_BUTTON_X      to Pair("BTN_X",      "X"),
+            KeyEvent.KEYCODE_BUTTON_Y      to Pair("BTN_Y",      "Y"),
+            KeyEvent.KEYCODE_BUTTON_L1     to Pair("BTN_L1",     "L1"),
+            KeyEvent.KEYCODE_BUTTON_R1     to Pair("BTN_R1",     "R1"),
+            KeyEvent.KEYCODE_BUTTON_L2     to Pair("BTN_L2",     "L2"),
+            KeyEvent.KEYCODE_BUTTON_R2     to Pair("BTN_R2",     "R2"),
+            KeyEvent.KEYCODE_BUTTON_SELECT to Pair("BTN_SELECT", "SELECT"),
+            KeyEvent.KEYCODE_BUTTON_START  to Pair("BTN_START",  "START"),
+            KeyEvent.KEYCODE_BUTTON_THUMBL to Pair("BTN_L3",     "L3"),
+            KeyEvent.KEYCODE_BUTTON_THUMBR to Pair("BTN_R3",     "R3"),
+            KeyEvent.KEYCODE_BUTTON_MODE   to Pair("BTN_HOME",   "HOME"),
+            KeyEvent.KEYCODE_DPAD_UP       to Pair("DPAD_UP",    "上"),
+            KeyEvent.KEYCODE_DPAD_DOWN     to Pair("DPAD_DOWN",  "下"),
+            KeyEvent.KEYCODE_DPAD_LEFT     to Pair("DPAD_LEFT",  "左"),
+            KeyEvent.KEYCODE_DPAD_RIGHT    to Pair("DPAD_RIGHT", "右"),
+            188 to Pair("BTN_1",  "1"),
+            189 to Pair("BTN_2",  "2"),
+            190 to Pair("BTN_3",  "3"),
+            191 to Pair("BTN_4",  "4"),
+            192 to Pair("BTN_5",  "5"),
+            193 to Pair("BTN_6",  "6"),
+            194 to Pair("BTN_7",  "7"),
+            195 to Pair("BTN_8",  "8"),
+            196 to Pair("BTN_9",  "9"),
+            197 to Pair("BTN_10", "10"),
+            198 to Pair("BTN_11", "11"),
+            199 to Pair("BTN_12", "12"),
+            200 to Pair("BTN_13", "13"),
+            201 to Pair("BTN_14", "14"),
+            202 to Pair("BTN_15", "15"),
+            203 to Pair("BTN_16", "16"),
+        )
+
+        fun keyEventToButton(event: KeyEvent): HidButtonEvent {
+            val pair = KEYCODE_TO_BUTTON[event.keyCode]
+                ?: return HidButtonEvent("RAW_${event.keyCode}", "键#${event.keyCode}", event.action == KeyEvent.ACTION_DOWN)
+            return HidButtonEvent(pair.first, pair.second, event.action == KeyEvent.ACTION_DOWN)
+        }
+
+        fun keyEventToButton(keyCode: Int): HidButtonEvent {
+            val pair = KEYCODE_TO_BUTTON[keyCode]
+                ?: return HidButtonEvent("RAW_$keyCode", "键#$keyCode", true)
+            return HidButtonEvent(pair.first, pair.second, true)
+        }
     }
 
     private var screenWidth: Int = 0
@@ -27,6 +80,31 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
     override fun onInterrupt() {}
+
+    override fun onKeyEvent(event: KeyEvent?): Boolean {
+        if (event == null) return false
+        if (event.repeatCount > 0) return false
+
+        val btn = keyEventToButton(event)
+        runCatching { AppContainer.require() }
+            .getOrNull()
+            ?.bluetoothController
+            ?.dispatchAccessibilityKey(btn)
+
+        val source = sourceToString(event.source)
+        Log.i(TAG, "onKeyEvent: keyCode=${event.keyCode} action=${event.action} src=$source -> ${btn.buttonName}/${btn.buttonId} pressed=${btn.isPressed}")
+        return false
+    }
+
+    private fun sourceToString(source: Int): String {
+        return when {
+            source and InputDevice.SOURCE_GAMEPAD != 0 -> "GAMEPAD"
+            source and InputDevice.SOURCE_JOYSTICK != 0 -> "JOYSTICK"
+            source and InputDevice.SOURCE_KEYBOARD != 0 -> "KEYBOARD"
+            source and InputDevice.SOURCE_DPAD != 0 -> "DPAD"
+            else -> "SRC_$source"
+        }
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -42,7 +120,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         }
         screenWidth = metrics.width()
         screenHeight = metrics.height()
-        Log.i(TAG, "service connected: ${screenWidth}x${screenHeight}")
+        Log.i(TAG, "✅ AccessibilityService connected ${screenWidth}x${screenHeight}, onKeyEvent will receive gamepad keys")
     }
 
     override fun onDestroy() {
@@ -50,42 +128,32 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    /**
-     * Perform a tap at normalized coordinates (0..1 range relative to screen).
-     */
     fun performTap(normX: Float, normY: Float): Boolean {
-        val x = clampX(normX)
-        val y = clampY(normY)
+        val x = clampX(normX); val y = clampY(normY)
         val path = Path().apply { moveTo(x, y); lineTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, 80L)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        return dispatchGesture(gesture, null, null).also {
-            Log.d(TAG, "tap ($x,$y) -> $it")
-        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, 80L))
+            .build()
+        return dispatchGesture(gesture, null, null).also { Log.d(TAG, "tap -> $it") }
     }
 
     fun performLongPress(normX: Float, normY: Float, durationMs: Long): Boolean {
-        val x = clampX(normX)
-        val y = clampY(normY)
+        val x = clampX(normX); val y = clampY(normY)
         val path = Path().apply { moveTo(x, y); lineTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        return dispatchGesture(gesture, null, null).also {
-            Log.d(TAG, "longPress ($x,$y,${durationMs}ms) -> $it")
-        }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
+            .build()
+        return dispatchGesture(gesture, null, null).also { Log.d(TAG, "longPress -> $it") }
     }
 
-    fun performSwipe(fromNormX: Float, fromNormY: Float, toNormX: Float, toNormY: Float, durationMs: Long): Boolean {
-        val fx = clampX(fromNormX)
-        val fy = clampY(fromNormY)
-        val tx = clampX(toNormX)
-        val ty = clampY(toNormY)
-        val path = Path().apply { moveTo(fx, fy); lineTo(tx, ty) }
-        val stroke = GestureDescription.StrokeDescription(path, 0L, durationMs)
-        val gesture = GestureDescription.Builder().addStroke(stroke).build()
-        return dispatchGesture(gesture, null, null).also {
-            Log.d(TAG, "swipe ($fx,$fy)->($tx,$ty) -> $it")
-        }
+    fun performSwipe(fx: Float, fy: Float, tx: Float, ty: Float, durationMs: Long): Boolean {
+        val x1 = clampX(fx); val y1 = clampY(fy)
+        val x2 = clampX(tx); val y2 = clampY(ty)
+        val path = Path().apply { moveTo(x1, y1); lineTo(x2, y2) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, durationMs))
+            .build()
+        return dispatchGesture(gesture, null, null).also { Log.d(TAG, "swipe -> $it") }
     }
 
     private fun clampX(normX: Float): Float {
@@ -93,8 +161,8 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         return max(10f, min(screenWidth - 10f, v))
     }
 
-    private fun clampY(normY: Float): Float {
-        val v = if (normY <= 1f) normY * screenHeight else normY
+    private fun clampY(normX: Float): Float {
+        val v = if (normX <= 1f) normX * screenHeight else normX
         return max(10f, min(screenHeight - 10f, v))
     }
 }

@@ -1,25 +1,24 @@
 package com.keymapper.app.ui
 
+
+import android.provider.Settings
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.util.Log
-import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatButton
-import androidx.appcompat.widget.SwitchCompat
 import androidx.appcompat.widget.Toolbar
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -36,371 +35,115 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var devicesRecycler: RecyclerView
+    private lateinit var tvDevicesStatus: TextView
+    private lateinit var tvDebugLog: TextView
+    private lateinit var tvDebugTitle: TextView
+    private lateinit var deviceAdapter: DeviceAdapter
     private var app: AppContainer? = null
 
-    private lateinit var toolbar: Toolbar
-    private lateinit var accessibilityCard: LinearLayout
-    private lateinit var devicesRecycler: RecyclerView
-    private lateinit var mappingsRecycler: RecyclerView
-    private lateinit var emptyMappingsText: TextView
-    private lateinit var deviceAdapter: DeviceAdapter
-    private lateinit var mappingAdapter: MappingAdapter
-
     private var PERMISSION_REQUEST_CODE = 100
+    private val debugLog = StringBuilder()
+    private var motionCount = 0
+    private var motionAxisCount = 0
+    private var keyCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(buildProgrammaticUI())
 
-        // 1. 用编程式布局 —— 完全绕过 XML Inflate
-        val root = buildProgrammaticUI()
-        setContentView(root)
-
-        // 2. 后台初始化
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val container = AppContainer.getOrCreate(this@MainActivity)
                 app = container
-
                 requestPermissions()
-
                 withContext(Dispatchers.Main) {
-                    setupAccessibilityCheck()
                     setupDeviceTab()
-                    setupMappingTab()
                 }
-
                 startEventCollectors()
+                refreshDeviceList()
             } catch (e: Throwable) {
                 Log.e(TAG, "init failed", e)
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "初始化失败: ${e.message}",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(this@MainActivity, "初始化失败: ${e.message}", Toast.LENGTH_LONG).show()
                 }
             }
         }
     }
 
-    private fun buildProgrammaticUI(): LinearLayout {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#FFF5F5F5"))
+    override fun onGenericMotionEvent(ev: MotionEvent?): Boolean {
+        ev ?: return super.onGenericMotionEvent(null)
+        val act = when (ev.action) {
+            MotionEvent.ACTION_DOWN -> "DOWN"
+            MotionEvent.ACTION_UP -> "UP"
+            MotionEvent.ACTION_MOVE -> "MOVE"
+            else -> "ACT${ev.action}"
         }
-
-        // Toolbar
-        toolbar = Toolbar(this).apply {
-            setBackgroundColor(Color.parseColor("#FF3F51B5"))
-            setTitleTextColor(Color.WHITE)
-            title = "KeyMapper"
-        }
-        root.addView(toolbar, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(56)
-        ))
-        setSupportActionBar(toolbar)
-
-        // ScrollView 内容
-        val scrollView = ScrollView(this).apply {
-            isFillViewport = true
-        }
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(12), dp(12), dp(12))
-        }
-
-        // 无障碍服务提示卡片
-        accessibilityCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
-        val accTitle = TextView(this).apply {
-            text = "请先开启无障碍服务"
-            textSize = 16f
-            setTextColor(Color.parseColor("#FF212121"))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-        }
-        val accDesc = TextView(this).apply {
-            text = "KeyMapper 需要无障碍服务来模拟点击"
-            textSize = 14f
-            setTextColor(Color.parseColor("#FF757575"))
-            setPadding(0, dp(4), 0, dp(8))
-        }
-        val accBtn = Button(this).apply {
-            text = "打开无障碍设置"
-            setOnClickListener {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            }
-        }
-        accessibilityCard.addView(accTitle)
-        accessibilityCard.addView(accDesc)
-        accessibilityCard.addView(accBtn)
-        content.addView(accessibilityCard, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, 0, dp(12))
-        })
-
-        // 已配对手柄标题
-        val devicesTitle = TextView(this).apply {
-            text = "已配对的手柄"
-            textSize = 16f
-            setTextColor(Color.parseColor("#FF212121"))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(4))
-        }
-        content.addView(devicesTitle)
-
-        // 刷新按钮
-        val refreshBtn = AppCompatButton(this).apply {
-            text = "🔄 刷新列表"
-            textSize = 14f
-            setOnClickListener {
-                lifecycleScope.launch(Dispatchers.Default) {
-                    try {
-                        val devices = app!!.bluetoothController.getPairedDevices()
-                        withContext(Dispatchers.Main) {
-                            deviceAdapter.submitList(devices)
-                        }
-                    } catch (e: SecurityException) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "请先授予蓝牙权限",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        requestPermissions()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "refresh devices failed", e)
-                    }
-                }
-            }
-        }
-        content.addView(refreshBtn, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, 0, 0, dp(8))
-        })
-
-        // 设备 RecyclerView
-        devicesRecycler = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@MainActivity)
-        }
-        content.addView(devicesRecycler, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(160)
-        ).apply {
-            setMargins(0, 0, 0, dp(8))
-        })
-
-        // 添加映射按钮
-        val addMappingBtn = AppCompatButton(this).apply {
-            text = "+ 添加新映射"
-            textSize = 15f
-            setOnClickListener {
-                startActivity(Intent(this@MainActivity, MappingConfigActivity::class.java))
-            }
-        }
-        content.addView(addMappingBtn, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            setMargins(0, dp(8), 0, dp(8))
-        })
-
-        // 映射标题
-        val mappingsTitle = TextView(this).apply {
-            text = "按键映射"
-            textSize = 16f
-            setTextColor(Color.parseColor("#FF212121"))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(4))
-        }
-        content.addView(mappingsTitle)
-
-        // 空状态
-        emptyMappingsText = TextView(this).apply {
-            text = "暂无映射配置"
-            textSize = 14f
-            setTextColor(Color.parseColor("#FF9E9E9E"))
-            gravity = Gravity.CENTER
-            setPadding(0, dp(16), 0, dp(16))
-            visibility = View.GONE
-        }
-        content.addView(emptyMappingsText)
-
-        // 映射 RecyclerView
-        mappingsRecycler = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@MainActivity)
-        }
-        content.addView(mappingsRecycler, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            dp(200)
-        ))
-
-        scrollView.addView(content)
-        root.addView(scrollView, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-
-        return root
-    }
-
-    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
-
-    override fun onResume() {
-        super.onResume()
-        try {
-            setupAccessibilityCheck()
-        } catch (e: Exception) {
-            Log.w(TAG, "accessibility check failed", e)
-        }
-    }
-
-    private fun setupAccessibilityCheck() {
-        try {
-            if (KeyMapperAccessibilityService.isRunning()) {
-                accessibilityCard.visibility = View.GONE
-            } else {
-                accessibilityCard.visibility = View.VISIBLE
-            }
-            val serviceRunning = KeyMapperAccessibilityService.isRunning()
-            val connState = app?.bluetoothController?.connectionState?.value
-            app?.mappingEngine?.setEnabled(serviceRunning && connState == ConnectionState.CONNECTED)
-        } catch (e: Exception) {
-            Log.w(TAG, "accessibility check failed", e)
-        }
-    }
-
-    private fun setupDeviceTab() {
-        val container = app ?: return
-
-        deviceAdapter = DeviceAdapter(
-            onConnect = { address ->
-                lifecycleScope.launch(Dispatchers.Default) {
-                    try {
-                        if (container.bluetoothController.connect(address)) {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "正在连接…",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        } else {
-                            withContext(Dispatchers.Main) {
-                                Toast.makeText(
-                                    this@MainActivity,
-                                    "连接失败",
-                                    Toast.LENGTH_SHORT
-                                ).show()
-                            }
-                        }
-                    } catch (e: SecurityException) {
-                        withContext(Dispatchers.Main) {
-                            Toast.makeText(
-                                this@MainActivity,
-                                "请先授予蓝牙权限",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                        requestPermissions()
-                    } catch (e: Exception) {
-                        Log.e(TAG, "connect failed", e)
-                    }
-                }
-            },
-            onDisconnect = {
-                try {
-                    container.bluetoothController.disconnect()
-                } catch (e: Exception) {
-                    Log.e(TAG, "disconnect failed", e)
-                }
-            }
-        )
-        devicesRecycler.adapter = deviceAdapter
-
-        lifecycleScope.launch(Dispatchers.Default) {
+        val axes = mutableListOf<String>()
+        for (axis in intArrayOf(MotionEvent.AXIS_X, MotionEvent.AXIS_Y, MotionEvent.AXIS_Z,
+                                MotionEvent.AXIS_RX, MotionEvent.AXIS_RY, MotionEvent.AXIS_RZ,
+                                MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER,
+                                MotionEvent.AXIS_HAT_X, MotionEvent.AXIS_HAT_Y)) {
             try {
-                container.bluetoothController.connectionState.collect { state ->
-                    withContext(Dispatchers.Main) {
-                        deviceAdapter.updateConnectionState(state)
-                        setupAccessibilityCheck()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "connectionState collect failed", e)
-            }
+                val v = ev.getAxisValue(axis)
+                if (v != 0f) axes.add("ax$axis=${"%.2f".format(v)}")
+            } catch (_: Exception) {}
         }
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                container.bluetoothController.connectedDevice.collect { device ->
-                    withContext(Dispatchers.Main) {
-                        deviceAdapter.updateConnectedDevice(device?.address)
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "connectedDevice collect failed", e)
-            }
+        if (axes.isNotEmpty() || ev.action != MotionEvent.ACTION_MOVE) {
+            motionAxisCount++
+            appendDebug("[MOTION#$motionCount] $act source=${ev.source} ${axes.joinToString(" ")}")
         }
+        return super.onGenericMotionEvent(ev)
     }
 
-    private fun setupMappingTab() {
-        val container = app ?: return
+    override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
+        event ?: return super.dispatchKeyEvent(null)
+        if (event.repeatCount > 0) return super.dispatchKeyEvent(event)
+        keyCount++
+        val btn = KeyMapperAccessibilityService.keyEventToButton(event)
+        val action = if (event.action == KeyEvent.ACTION_DOWN) "DOWN" else "UP  "
+        val mapping = btn?.let { "-> ${it.buttonName}" } ?: "-> 非手柄按键"
+        appendDebug("[KEY#$keyCount] $action keyCode=${event.keyCode} source=${event.source} flags=${event.flags} $mapping")
+        return super.dispatchKeyEvent(event)
+    }
 
-        mappingAdapter = MappingAdapter(
-            onToggle = { config, enabled ->
-                lifecycleScope.launch(Dispatchers.Default) {
-                    try {
-                        container.mappingRepository.update(config.copy(enabled = enabled))
-                    } catch (e: Exception) {
-                        Log.e(TAG, "toggle mapping failed", e)
-                    }
-                }
-            },
-            onDelete = { config ->
-                AlertDialog.Builder(this)
-                    .setTitle("删除映射")
-                    .setMessage("确定要删除这个映射吗？")
-                    .setPositiveButton("删除") { _, _ ->
-                        lifecycleScope.launch(Dispatchers.Default) {
-                            try {
-                                container.mappingRepository.remove(config.id)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "delete mapping failed", e)
-                            }
-                        }
-                    }
-                    .setNegativeButton("取消", null)
-                    .show()
-            },
-            onEdit = { config ->
-                startActivity(Intent(this, MappingConfigActivity::class.java).apply {
-                    putExtra(MappingConfigActivity.EXTRA_MAPPING_ID, config.id)
-                })
-            }
-        )
-        mappingsRecycler.adapter = mappingAdapter
-
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                container.mappingRepository.mappings.collect { list ->
-                    withContext(Dispatchers.Main) {
-                        mappingAdapter.submitList(list)
-                        emptyMappingsText.visibility =
-                            if (list.isEmpty()) View.VISIBLE else View.GONE
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "mappings collect failed", e)
-            }
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        ev ?: return super.dispatchTouchEvent(null)
+        if (ev.action == MotionEvent.ACTION_MOVE) return super.dispatchTouchEvent(ev) // 忽略 move
+        motionCount++
+        val act = when (ev.action) {
+            MotionEvent.ACTION_DOWN -> "DOWN"
+            MotionEvent.ACTION_UP -> "UP"
+            MotionEvent.ACTION_CANCEL -> "CANCEL"
+            else -> "OTHER(${ev.action})"
         }
+        appendDebug("[TOUCH#$motionCount] $act x=${ev.x.toInt()},y=${ev.y.toInt()} source=${ev.source} pointerCount=${ev.pointerCount}")
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        val btn = KeyMapperAccessibilityService.keyEventToButton(event ?: return super.onKeyDown(keyCode, event))
+        if (btn != null) appendDebug("[onKeyDown] keyCode=$keyCode -> ${btn.buttonName}")
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        val btn = KeyMapperAccessibilityService.keyEventToButton(event ?: return super.onKeyUp(keyCode, event))
+        if (btn != null) appendDebug("[onKeyUp] keyCode=$keyCode -> ${btn.buttonName}")
+        return super.onKeyUp(keyCode, event)
+    }
+
+    private fun appendDebug(line: String) {
+        debugLog.insert(0, line + "\n")
+        if (debugLog.length > 4000) debugLog.setLength(4000)
+        val log = debugLog.toString()
+        runOnUiThread {
+            try {
+                tvDebugLog.text = log
+                tvDebugTitle.text = "🔍 调试面板（KEY=$keyCount TOUCH=$motionCount MOTION=$motionAxisCount）"
+            } catch (_: Exception) {}
+        }
+        Log.i(TAG, line)
     }
 
     private fun startEventCollectors() {
@@ -409,15 +152,11 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 container.bluetoothController.buttonEvents.collect { event ->
-                    try {
-                        container.mappingEngine.onButtonEvent(event)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "button event dispatch failed", e)
-                    }
+                    try { container.mappingEngine.onButtonEvent(event) }
+                    catch (e: Exception) { Log.e(TAG, "button dispatch failed", e) }
+                    Log.i(TAG, "buttonEvents flow: ${event.buttonName} pressed=${event.isPressed}")
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "buttonEvents collect failed", e)
-            }
+            } catch (e: Exception) { Log.e(TAG, "buttonEvents collect failed", e) }
         }
 
         lifecycleScope.launch(Dispatchers.Default) {
@@ -425,8 +164,76 @@ class MainActivity : AppCompatActivity() {
                 container.mappingRepository.mappings.collect { list ->
                     container.mappingEngine.updateActiveMappings(list)
                 }
+            } catch (e: Exception) { Log.e(TAG, "mappings collect failed", e) }
+        }
+
+        lifecycleScope.launch(Dispatchers.Default) {
+            try {
+                container.bluetoothController.connectionState.collect { state ->
+                    withContext(Dispatchers.Main) {
+                        val dev = container.bluetoothController.connectedDevice.value
+                        when (state) {
+                            ConnectionState.CONNECTED -> {
+                                tvDevicesStatus.text = "✅ 已选中并连接：${dev?.name ?: "?"}"
+                                tvDevicesStatus.setTextColor(Color.parseColor("#FF4CAF50"))
+                            }
+                            ConnectionState.CONNECTING -> {
+                                tvDevicesStatus.text = "⏳ 连接中…"
+                                tvDevicesStatus.setTextColor(Color.parseColor("#FFFF9800"))
+                            }
+                            ConnectionState.DISCONNECTED -> {
+                                tvDevicesStatus.text = "未选中设备"
+                                tvDevicesStatus.setTextColor(Color.parseColor("#FF9E9E9E"))
+                            }
+                        }
+                        deviceAdapter.updateConnectionState(state)
+                    }
+                }
+            } catch (e: Exception) { Log.e(TAG, "connectionState collect failed", e) }
+        }
+
+        lifecycleScope.launch(Dispatchers.Default) {
+            try {
+                container.bluetoothController.connectedDevice.collect {
+                    withContext(Dispatchers.Main) { deviceAdapter.notifyDataSetChanged() }
+                }
+            } catch (e: Exception) { Log.e(TAG, "connectedDevice collect failed", e) }
+        }
+    }
+
+    private fun setupDeviceTab() {
+        val container = app ?: return
+        deviceAdapter = DeviceAdapter(
+            selectedAddressProvider = {
+                container.bluetoothController.connectedDevice.value?.address
+            },
+            onSelect = { address ->
+                container.bluetoothController.selectDevice(address)
+                deviceAdapter.notifyDataSetChanged()
+                Toast.makeText(this, "已选中手柄，按手柄键看调试面板有没有反应", Toast.LENGTH_LONG).show()
+            },
+            onUnselect = {
+                container.bluetoothController.unselectDevice()
+                deviceAdapter.notifyDataSetChanged()
+            }
+        )
+        devicesRecycler.adapter = deviceAdapter
+    }
+
+    private fun refreshDeviceList() {
+        val container = app ?: return
+        lifecycleScope.launch(Dispatchers.Default) {
+            try {
+                val devices = container.bluetoothController.getCurrentlyConnectedDevices()
+                withContext(Dispatchers.Main) {
+                    deviceAdapter.submitList(devices)
+                    if (devices.isEmpty()) {
+                        tvDevicesStatus.text = "没有发现已配对的蓝牙设备\n请先在系统蓝牙设置里配对手柄"
+                        tvDevicesStatus.setTextColor(Color.parseColor("#FFFF9800"))
+                    }
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "mappings collect failed", e)
+                Log.e(TAG, "refresh failed", e)
             }
         }
     }
@@ -445,16 +252,149 @@ class MainActivity : AppCompatActivity() {
         }
         if (need.isNotEmpty()) {
             runOnUiThread {
-                ActivityCompat.requestPermissions(
-                    this,
-                    need.toTypedArray(),
-                    PERMISSION_REQUEST_CODE
-                )
+                ActivityCompat.requestPermissions(this, need.toTypedArray(), PERMISSION_REQUEST_CODE)
             }
         }
     }
 
-    companion object {
-        private const val TAG = "MainActivity"
+    private fun buildProgrammaticUI(): LinearLayout {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#FFF5F5F5"))
+        }
+
+        val toolbar = Toolbar(this).apply {
+            setBackgroundColor(Color.parseColor("#FF3F51B5"))
+            setTitleTextColor(Color.WHITE)
+            title = "KeyMapper"
+        }
+        root.addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        setSupportActionBar(toolbar)
+
+        // ========== 无障碍服务状态条（K2ER 方案的核心） ==========
+        val statusBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setGravity(android.view.Gravity.CENTER_VERTICAL)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+            setBackgroundColor(Color.parseColor("#FFFDE7"))
+        }
+
+        val tvA11yStatus = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.parseColor("#FF6F00"))
+        }
+        val btnGoA11y = AppCompatButton(this).apply {
+            text = "去开启"
+            setOnClickListener {
+                try {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                } catch (e: Exception) {
+                    Toast.makeText(this@MainActivity, "请手动进入系统设置 → 无障碍 → KeyMapper", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+
+        val refreshStatusBar = Runnable {
+            val running = com.keymapper.app.service.KeyMapperAccessibilityService.isRunning()
+            if (running) {
+                statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
+                tvA11yStatus.text = "✅ 无障碍服务已开启（按键捕获已激活）"
+                tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
+                btnGoA11y.visibility = View.GONE
+            } else {
+                statusBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
+                tvA11yStatus.text = "⚠️ 无障碍服务未开启！这是捕获手柄按键的关键"
+                tvA11yStatus.setTextColor(Color.parseColor("#FFC62828"))
+                btnGoA11y.visibility = View.VISIBLE
+            }
+        }
+        statusBar.addView(tvA11yStatus, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        statusBar.addView(btnGoA11y)
+
+        root.addView(statusBar)
+        // 每秒刷新一次状态
+        root.post(object : Runnable {
+            override fun run() {
+                refreshStatusBar.run()
+                root.postDelayed(this, 1500)
+            }
+        })
+
+        val scrollView = ScrollView(this).apply { isFillViewport = true }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+        }
+
+        val devicesTitle = TextView(this).apply {
+            text = "已配对的蓝牙设备（点『选中』指定）"
+            textSize = 16f
+            setTextColor(Color.parseColor("#FF212121"))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        content.addView(devicesTitle)
+
+        tvDevicesStatus = TextView(this).apply {
+            text = "未选中设备"
+            textSize = 13f
+            setTextColor(Color.parseColor("#FF9E9E9E"))
+            setPadding(0, dp(2), 0, dp(6))
+        }
+        content.addView(tvDevicesStatus)
+
+        devicesRecycler = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+        }
+        content.addView(devicesRecycler, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(180)))
+
+        val refreshBtn = AppCompatButton(this).apply {
+            text = "🔄 刷新设备列表"
+            setOnClickListener { refreshDeviceList() }
+        }
+        content.addView(refreshBtn)
+
+        val addBtn = AppCompatButton(this).apply {
+            text = "+ 添加新映射"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, MappingConfigActivity::class.java))
+            }
+        }
+        content.addView(addBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        tvDebugTitle = TextView(this).apply {
+            text = "🔍 调试面板（KEY=$keyCount TOUCH=$motionCount）"
+            textSize = 14f
+            setTextColor(Color.parseColor("#FFD32F2F"))
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setPadding(0, dp(16), 0, dp(4))
+        }
+        content.addView(tvDebugTitle)
+
+        tvDebugLog = TextView(this).apply {
+            text = "清空后按手柄按键试试…\n如果这里仍然什么都没有，说明你的手柄事件被系统完全吞了，那我们需要换更激进的方案。\n"
+            textSize = 11f
+            setTextColor(Color.parseColor("#FF212121"))
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+        }
+        content.addView(tvDebugLog, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200)))
+
+        val clearDebugBtn = AppCompatButton(this).apply {
+            text = "清除调试面板"
+            setOnClickListener {
+                debugLog.clear()
+                tvDebugLog.text = ""
+                keyCount = 0; motionCount = 0
+            }
+        }
+        content.addView(clearDebugBtn)
+
+        scrollView.addView(content)
+        root.addView(scrollView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        return root
     }
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+    companion object { private const val TAG = "MainActivity" }
 }
