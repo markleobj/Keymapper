@@ -74,11 +74,19 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
         appendLog("ℹ️ Android SDK = ${android.os.Build.VERSION.SDK_INT}")
     }
 
+    private var imeFocusTarget: android.widget.EditText? = null
+
     override fun onResume() {
         super.onResume()
         KeyMapperAccessibilityService.addKeyListener(this)
         mainHandler.post(statusRunnable)
         appendLog("🔔 已向无障碍服务注册按键监听器")
+        imeFocusTarget?.postDelayed({
+            imeFocusTarget?.requestFocus()
+            val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.showSoftInput(imeFocusTarget, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            appendLog("⌨️ 已强制激活 KeyMapper 输入法")
+        }, 300)
     }
 
     override fun onPause() {
@@ -188,6 +196,18 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#FFF5F5F5"))
         }
+
+        imeFocusTarget = android.widget.EditText(this).apply {
+            visibility = View.INVISIBLE
+            isFocusable = true
+            isFocusableInTouchMode = true
+            width = 1
+            height = 1
+            setBackgroundResource(0)
+            textSize = 1f
+            alpha = 0f
+        }
+        root.addView(imeFocusTarget, LinearLayout.LayoutParams(1, 1))
 
         val toolbar = Toolbar(this).apply {
             setBackgroundColor(Color.parseColor("#FF3F51B5"))
