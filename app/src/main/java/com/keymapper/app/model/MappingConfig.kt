@@ -37,7 +37,8 @@ data class HidButtonEvent(
     val buttonId: String,
     val buttonName: String,
     val isPressed: Boolean,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val deviceName: String? = null
 )
 
 data class DeviceInfo(val name: String?, val address: String)

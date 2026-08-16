@@ -15,6 +15,7 @@ class MappingEngine(
     private val handler = Handler(Looper.getMainLooper())
     private var activeMappings: List<MappingConfig> = emptyList()
     private var enabled: Boolean = false
+    private var requiredDeviceName: String? = null
     private val buttonStateMap = mutableMapOf<String, Boolean>()
 
     companion object {
@@ -26,16 +27,29 @@ class MappingEngine(
         Log.i(TAG, "引擎 ${if (enabled) "已启用" else "已禁用"}")
     }
 
+    fun setRequiredDevice(name: String?) {
+        requiredDeviceName = name
+        Log.i(TAG, "🎯 引擎设备过滤: ${name ?: "不限制（所有手柄都触发）"}")
+    }
+
     fun updateActiveMappings(list: List<MappingConfig>) {
         activeMappings = list.filter { it.enabled }
         enabled = true
         Log.i(TAG, "激活映射数: ${activeMappings.size}, 引擎已自动启用")
     }
 
+    private fun matchesDevice(event: HidButtonEvent, mapping: MappingConfig): Boolean {
+        if (mapping.deviceAddress.isNullOrBlank()) return true
+        val dev = event.deviceName
+        if (dev.isNullOrBlank()) return true
+        return dev.equals(mapping.deviceAddress, ignoreCase = true) ||
+               dev.contains(mapping.deviceAddress, ignoreCase = true)
+    }
+
     fun isEventBlocked(event: HidButtonEvent): Boolean {
         if (!enabled) return false
         val mapping = activeMappings.firstOrNull {
-            it.button == event.buttonId || it.button == event.buttonName
+            (it.button == event.buttonId || it.button == event.buttonName) && matchesDevice(event, it)
         } ?: return false
         return mapping.blocked
     }
@@ -49,7 +63,7 @@ class MappingEngine(
         buttonStateMap[event.buttonId] = event.isPressed
 
         val mapping = activeMappings.firstOrNull {
-            it.button == event.buttonId || it.button == event.buttonName
+            (it.button == event.buttonId || it.button == event.buttonName) && matchesDevice(event, it)
         } ?: run {
             if (activeMappings.isNotEmpty()) {
                 Log.d(TAG, "按键 ${event.buttonId} 没有匹配的映射 (已配置: ${activeMappings.map { it.button }})")

@@ -16,6 +16,9 @@ import com.keymapper.app.AppContainer
 import com.keymapper.app.model.HidButtonEvent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
@@ -94,9 +97,10 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         )
 
         fun keyEventToButton(event: KeyEvent): HidButtonEvent {
+            val devName = try { event.device?.name } catch (_: Exception) { null }
             val pair = KEYCODE_TO_BUTTON[event.keyCode]
-                ?: return HidButtonEvent("RAW_${event.keyCode}", "键#${event.keyCode}", event.action == KeyEvent.ACTION_DOWN)
-            return HidButtonEvent(pair.first, pair.second, event.action == KeyEvent.ACTION_DOWN)
+                ?: return HidButtonEvent("RAW_${event.keyCode}", "键#${event.keyCode}", event.action == KeyEvent.ACTION_DOWN, deviceName = devName)
+            return HidButtonEvent(pair.first, pair.second, event.action == KeyEvent.ACTION_DOWN, deviceName = devName)
         }
 
         fun sourceToString(source: Int): String {
@@ -116,6 +120,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
     private var screenWidth: Int = 0
     private var screenHeight: Int = 0
     private var imeBridge: InputMethod? = null
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -162,18 +167,45 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         // 列出所有输入设备（诊断用）
         enumerateInputDevices()
 
-        // 立即初始化 AppContainer + engine，防止没有 Activity 时按键无处理
+        // 让 AccessibilityService 成为 engine 的唯一真相来源:
+        //  - 进程里不管有没有 Activity，service 活着 → engine 就活着
+        //  - 用户改了映射，DataStore 变了 → engine 自动同步
         try {
             val container = AppContainer.getOrCreate(this)
-            CoroutineScope(Dispatchers.IO).launch {
+
+            serviceScope.launch {
                 try {
-                    val mappings = container.mappingRepository.getCurrent()
-                    container.mappingEngine.updateActiveMappings(mappings)
-                    Log.i(TAG, "🚀 引擎热加载 ${mappings.size} 条映射（${mappings.count { it.enabled }} 启用）")
+                    container.mappingRepository.mappings.collectLatest { list ->
+                        container.mappingEngine.updateActiveMappings(list)
+                        Log.i(TAG, "🔄 引擎同步: ${list.size} 条映射（${list.count { it.enabled }} 启用）")
+                    }
                 } catch (e: Exception) {
-                    Log.e(TAG, "引擎热加载失败", e)
+                    Log.e(TAG, "mappings flow collect 异常", e)
                 }
             }
+
+            serviceScope.launch {
+                try {
+                    container.mappingRepository.currentProfileFlow.collectLatest { profile ->
+                        Log.i(TAG, "🔄 切换方案: $profile")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "profile flow collect 异常", e)
+                }
+            }
+
+            serviceScope.launch {
+                try {
+                    container.bluetoothController.connectedDevice.collect { info ->
+                        container.mappingEngine.setRequiredDevice(info?.name)
+                        Log.i(TAG, "🎮 手柄连接状态: ${info?.name ?: "未连接"}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "device flow collect 异常", e)
+                }
+            }
+
+            Log.i(TAG, "🚀 引擎已挂载，监听 DataStore 变化")
         } catch (e: Throwable) {
             Log.e(TAG, "AppContainer 初始化失败", e)
         }
@@ -225,7 +257,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         if (container == null) {
             Log.w(TAG, "AppContainer 未就绪，跳过按键处理")
         } else {
-            runCatching { container.bluetoothController.dispatchAccessibilityKey(btn) }
             val engine = container.mappingEngine
             if (engine.isEventBlocked(btn)) {
                 Log.i(TAG, "🚫 拦截按键 ${btn.buttonName} (blocked=true)")
@@ -253,6 +284,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
     override fun onDestroy() {
         instance = null
         imeBridge = null
+        serviceScope.cancel("service destroyed")
         super.onDestroy()
     }
 

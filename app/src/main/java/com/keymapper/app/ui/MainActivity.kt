@@ -30,6 +30,7 @@ import com.keymapper.app.floating.FloatingWindowManager
 import com.keymapper.app.mapping.MappingAdapter
 import com.keymapper.app.model.HidButtonEvent
 import com.keymapper.app.service.KeyMapperAccessibilityService
+import com.keymapper.app.service.MappingForegroundService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,6 +56,8 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
     private var PERMISSION_REQUEST_CODE = 100
     private val debugLog = StringBuilder()
     private var keyCount = 0
+
+    private var floatBtn: AppCompatButton? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -367,6 +370,12 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
     }
 
     private fun requestOverlayAndStart() {
+        if (MappingForegroundService.isRunning()) {
+            MappingForegroundService.stop(this)
+            Toast.makeText(this, "⏹ 悬浮窗已停止", Toast.LENGTH_SHORT).show()
+            refreshAll()
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "请在弹出的设置页中允许『显示在其他应用上层』", Toast.LENGTH_LONG).show()
             startActivity(Intent(
@@ -375,8 +384,9 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             ))
             return
         }
-        FloatingWindowManager.getInstance(this).show()
+        MappingForegroundService.start(this)
         Toast.makeText(this, "🎮 悬浮窗已开启，切换到目标 app 试试", Toast.LENGTH_LONG).show()
+        refreshAll()
     }
 
     private fun buildProgrammaticUI(): LinearLayout {
@@ -671,7 +681,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             setOnClickListener { startActivity(Intent(this@MainActivity, MappingConfigActivity::class.java)) }
         }
-        val floatBtn = AppCompatButton(this).apply {
+        floatBtn = AppCompatButton(this).apply {
             text = "🎮 开启悬浮"
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
             setOnClickListener { requestOverlayAndStart() }
@@ -733,6 +743,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
                     tvMappingCount.text = "  本方案共 ${mappings.size} 条映射"
                     mappingAdapter.submitList(mappings)
                     tvEmptyHint.visibility = if (mappings.isEmpty()) View.VISIBLE else View.GONE
+                    floatBtn?.text = if (MappingForegroundService.isRunning()) "⏹ 停止悬浮" else "🎮 开启悬浮"
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "refreshAll failed", e)

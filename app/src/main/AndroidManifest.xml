@@ -57,6 +57,8 @@
             <meta-data android:name="android.view.im"
                 android:resource="@xml/ime_config" />
         </service>
-        <service android:name=".service.MappingForegroundService" android:exported="false" />
+        <service android:name=".service.MappingForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
     </application>
 </manifest>

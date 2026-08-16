@@ -25,8 +25,8 @@ import com.keymapper.app.ui.MainActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -55,6 +55,7 @@ class FloatingWindowManager(private val context: Context) {
     private val windowManager: WindowManager =
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var observeJob: Job? = null
 
     private var ballView: View? = null
     private var panelView: View? = null
@@ -105,7 +106,8 @@ class FloatingWindowManager(private val context: Context) {
         panelParams = null
         ballParams = null
         isRunning = false
-        scope.cancel()
+        observeJob?.cancel()
+        observeJob = null
         Log.i(TAG, "hidden")
     }
 
@@ -289,13 +291,12 @@ class FloatingWindowManager(private val context: Context) {
     }
 
     private fun observeMappings() {
-        scope.launch(Dispatchers.Default) {
+        observeJob?.cancel()
+        observeJob = scope.launch(Dispatchers.Default) {
             val repo = runCatching { AppContainer.getOrCreate(context).mappingRepository }.getOrNull() ?: return@launch
-            repo.mappings.collectLatest { refreshPanel() }
-        }
-        scope.launch(Dispatchers.Default) {
-            val repo = runCatching { AppContainer.getOrCreate(context).mappingRepository }.getOrNull() ?: return@launch
-            repo.currentProfileFlow.collectLatest { refreshPanel() }
+            val job1 = launch { repo.mappings.collectLatest { refreshPanel() } }
+            val job2 = launch { repo.currentProfileFlow.collectLatest { refreshPanel() } }
+            job1.join()
         }
     }
 
