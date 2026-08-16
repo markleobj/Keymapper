@@ -372,11 +372,19 @@ class KeyMapperAccessibilityService : AccessibilityService() {
                 }
 
                 override fun onTouchEvent(event: MotionEvent): Boolean {
+                    val dev = event.device
+                    val devName = dev?.name ?: "?"
+                    val srcLabel = sourceToString(event.source)
+                    Log.i(TAG, "🪟 Window.onTouchEvent act=${event.actionMasked} dev=\"$devName\" src=$srcLabel raw=(${event.rawX.toInt()},${event.rawY.toInt()})")
                     gamepadTracker.processTouch(event)
                     return false
                 }
 
                 override fun onGenericMotionEvent(event: MotionEvent): Boolean {
+                    val dev = event.device
+                    val devName = dev?.name ?: "?"
+                    val srcLabel = sourceToString(event.source)
+                    Log.i(TAG, "🪟 Window.onGenericMotionEvent act=${event.actionMasked} dev=\"$devName\" src=$srcLabel")
                     if (gamepadTracker.processTouch(event)) return true
                     return false
                 }
@@ -387,8 +395,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             }
-            val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            val flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.MATCH_PARENT,
                 WindowManager.LayoutParams.MATCH_PARENT,
@@ -402,8 +409,12 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             keyCaptureView = view
             keyCaptureParams = params
             keyCaptureAttached = true
-            view.post { view.requestFocus() }
-            Log.i(TAG, "✅ 按键+触摸捕获 Window 已挂载 (全屏透明，触摸→按键判定)")
+            view.post {
+                view.requestFocus()
+                view.requestFocusFromTouch()
+                Log.i(TAG, "🔍 Window isFocused=${view.isFocused} isWindowFocused=${view.hasWindowFocus()}")
+            }
+            Log.i(TAG, "✅ 按键+触摸捕获 Window 已挂载 (全屏透明，flags=0x${flags.toString(16)})")
         } catch (e: Throwable) {
             Log.e(TAG, "❌ attachKeyCaptureWindow 失败", e)
         }
@@ -451,14 +462,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
         val pkg = event.packageName?.toString() ?: return
         if (pkg == MY_PACKAGE) return
-
-        if (pkg == currentPackageName) return
-        currentPackageName = pkg
-        currentPackageLabel = runCatching {
-            val info = packageManager.getApplicationInfo(pkg, 0)
-            packageManager.getApplicationLabel(info).toString()
-        }.getOrNull()
-        Log.i(TAG, "📱 前台 APP: $pkg (${currentPackageLabel ?: "?"})")
     }
 
     override fun onInterrupt() {}
