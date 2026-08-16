@@ -51,7 +51,7 @@ class MappingConfigActivity : AppCompatActivity() {
         setupListeners()
 
         editingId?.let { id ->
-            lifecycleScope.launch {
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
                 app.mappingRepository.mappings.collect { list ->
                     list.firstOrNull { it.id == id }?.let { config ->
                         fillFromConfig(config)
@@ -130,7 +130,7 @@ class MappingConfigActivity : AppCompatActivity() {
             duration = longPressDuration,
             enabled = true
         )
-        lifecycleScope.launch {
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             app.mappingRepository.add(config)
             Toast.makeText(this@MappingConfigActivity, "已保存", Toast.LENGTH_SHORT).show()
             finish()

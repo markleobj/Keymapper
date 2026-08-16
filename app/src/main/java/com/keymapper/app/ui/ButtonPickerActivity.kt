@@ -59,7 +59,7 @@ class ButtonPickerActivity : AppCompatActivity() {
     private fun startCapturing() {
         binding.tvStatus.text = "按下手柄按键…"
         captureJob?.cancel()
-        captureJob = lifecycleScope.launch {
+        captureJob = lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
             app.bluetoothController.buttonEvents.collect { event ->
                 if (event.isPressed) {
                     lastButton = event

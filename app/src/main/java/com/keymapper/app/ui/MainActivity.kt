@@ -19,7 +19,9 @@ import com.keymapper.app.bluetooth.ConnectionState
 import com.keymapper.app.databinding.ActivityMainBinding
 import com.keymapper.app.mapping.MappingAdapter
 import com.keymapper.app.service.KeyMapperAccessibilityService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -41,14 +43,35 @@ class MainActivity : AppCompatActivity() {
         setupDeviceTab()
         setupMappingTab()
         setupAccessibilityCheck()
+        startEventCollectors()
     }
 
     override fun onResume() {
         super.onResume()
-        setupAccessibilityCheck()
         try {
-            setupMappingTab()
-        } catch (_: Exception) {
+            setupAccessibilityCheck()
+        } catch (e: Exception) {
+            Log.w(TAG, "accessibility check failed", e)
+        }
+    }
+
+    private fun startEventCollectors() {
+        lifecycleScope.launch(Dispatchers.Default) {
+            app.bluetoothController.buttonEvents.collect { event ->
+                try {
+                    app.mappingEngine.onButtonEvent(event)
+                } catch (e: Exception) {
+                    Log.e(TAG, "button event dispatch failed", e)
+                }
+            }
+        }
+
+        lifecycleScope.launch(Dispatchers.Default) {
+            app.mappingRepository.mappings.collect { list ->
+                withContext(Dispatchers.Main) {
+                    app.mappingEngine.updateActiveMappings(list)
+                }
+            }
         }
     }
 
@@ -123,20 +146,24 @@ class MainActivity : AppCompatActivity() {
         binding.devicesRecycler.layoutManager = LinearLayoutManager(this)
         binding.devicesRecycler.adapter = deviceAdapter
 
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.Default) {
             try {
                 app.bluetoothController.connectionState.collect { state ->
-                    deviceAdapter.updateConnectionState(state)
-                    setupAccessibilityCheck()
+                    withContext(Dispatchers.Main) {
+                        deviceAdapter.updateConnectionState(state)
+                        setupAccessibilityCheck()
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "connectionState collect failed", e)
             }
         }
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.Default) {
             try {
                 app.bluetoothController.connectedDevice.collect { device ->
-                    deviceAdapter.updateConnectedDevice(device?.address)
+                    withContext(Dispatchers.Main) {
+                        deviceAdapter.updateConnectedDevice(device?.address)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "connectedDevice collect failed", e)
@@ -168,11 +195,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupMappingTab() {
-        if (::mappingAdapter.isInitialized) return
-
         mappingAdapter = MappingAdapter(
             onToggle = { config, enabled ->
-                lifecycleScope.launch {
+                lifecycleScope.launch(Dispatchers.Default) {
                     try {
                         app.mappingRepository.update(config.copy(enabled = enabled))
                     } catch (e: Exception) {
@@ -181,7 +206,7 @@ class MainActivity : AppCompatActivity() {
                 }
             },
             onDelete = { config ->
-                lifecycleScope.launch {
+                lifecycleScope.launch(Dispatchers.Default) {
                     try {
                         app.mappingRepository.remove(config.id)
                     } catch (e: Exception) {
@@ -198,12 +223,14 @@ class MainActivity : AppCompatActivity() {
         binding.mappingsRecycler.layoutManager = LinearLayoutManager(this)
         binding.mappingsRecycler.adapter = mappingAdapter
 
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.Default) {
             try {
                 app.mappingRepository.mappings.collect { list ->
-                    mappingAdapter.submitList(list)
-                    binding.emptyMappings.visibility =
-                        if (list.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+                    withContext(Dispatchers.Main) {
+                        mappingAdapter.submitList(list)
+                        binding.emptyMappings.visibility =
+                            if (list.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "mappings collect failed", e)

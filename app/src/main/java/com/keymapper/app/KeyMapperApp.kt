@@ -5,10 +5,6 @@ import android.util.Log
 import com.keymapper.app.bluetooth.BluetoothHidController
 import com.keymapper.app.mapping.MappingEngine
 import com.keymapper.app.mapping.MappingRepository
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 class KeyMapperApp : Application() {
 
@@ -30,21 +26,10 @@ class KeyMapperApp : Application() {
         try {
             bluetoothController = BluetoothHidController(this)
             mappingRepository = MappingRepository(this)
-            mappingEngine = MappingEngine(this, mappingRepository)
-
-            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-            scope.launch {
-                bluetoothController.buttonEvents.collect { event ->
-                    try {
-                        mappingEngine.onButtonEvent(event)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "button event dispatch failed", e)
-                    }
-                }
-            }
-            Log.i(TAG, "KeyMapperApp initialized OK")
+            mappingEngine = MappingEngine(mappingRepository)
+            Log.i(TAG, "KeyMapperApp constructed OK (coroutines deferred to Activity)")
         } catch (e: Throwable) {
-            Log.e(TAG, "KeyMapperApp init FAILED", e)
+            Log.e(TAG, "KeyMapperApp construction FAILED", e)
         }
     }
 
