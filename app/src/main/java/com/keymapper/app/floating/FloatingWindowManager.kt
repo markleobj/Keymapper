@@ -125,11 +125,26 @@ class FloatingWindowManager(private val context: Context) {
 
         val panelW = dp(260)
         val panelH = WindowManager.LayoutParams.WRAP_CONTENT
+
+        val dm = context.resources.displayMetrics
+        val screenW = dm.widthPixels
+        val ballSize = dp(48)
+        val gap = dp(8)
+
+        val ballCenterX = ballLoc[0] + ballSize / 2
+        val x = if (ballCenterX > screenW / 2) {
+            (ballLoc[0] - panelW - gap).coerceAtLeast(0)
+        } else {
+            (ballLoc[0] + ballSize + gap).coerceAtMost((screenW - panelW).coerceAtLeast(0))
+        }
+        val y = (ballLoc[1] + ballSize + dp(4)).coerceAtMost(dm.heightPixels - dp(200))
+
+        Log.i(TAG, "showPanel ball=(${ballLoc[0]},${ballLoc[1]}) screen=${screenW}x${dm.heightPixels} → panel=($x,$y) size=${panelW}")
+
         val params = buildLayoutParams(
             w = panelW, h = panelH,
             gravity = Gravity.TOP or Gravity.START,
-            x = ballLoc[0] - panelW + dp(48),
-            y = ballLoc[1] + dp(56)
+            x = x, y = y
         )
 
         try {

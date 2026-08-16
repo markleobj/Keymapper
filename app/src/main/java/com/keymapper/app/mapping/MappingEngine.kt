@@ -28,7 +28,8 @@ class MappingEngine(
 
     fun updateActiveMappings(list: List<MappingConfig>) {
         activeMappings = list.filter { it.enabled }
-        Log.i(TAG, "激活映射数: ${activeMappings.size}")
+        enabled = true
+        Log.i(TAG, "激活映射数: ${activeMappings.size}, 引擎已自动启用")
     }
 
     fun isEventBlocked(event: HidButtonEvent): Boolean {
@@ -40,13 +41,21 @@ class MappingEngine(
     }
 
     fun onButtonEvent(event: HidButtonEvent) {
-        if (!enabled) return
+        if (!enabled) {
+            Log.w(TAG, "⚠️ onButtonEvent: 引擎未启用 (enabled=false)")
+            return
+        }
 
         buttonStateMap[event.buttonId] = event.isPressed
 
         val mapping = activeMappings.firstOrNull {
             it.button == event.buttonId || it.button == event.buttonName
-        } ?: return
+        } ?: run {
+            if (activeMappings.isNotEmpty()) {
+                Log.d(TAG, "按键 ${event.buttonId} 没有匹配的映射 (已配置: ${activeMappings.map { it.button }})")
+            }
+            return
+        }
 
         Log.i(TAG, "🎯 触发: ${mapping.button} → ${mapping.actionType}")
 

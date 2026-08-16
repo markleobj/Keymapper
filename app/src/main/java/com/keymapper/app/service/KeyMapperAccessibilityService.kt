@@ -14,6 +14,9 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import com.keymapper.app.AppContainer
 import com.keymapper.app.model.HidButtonEvent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 
@@ -158,6 +161,22 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
         // 列出所有输入设备（诊断用）
         enumerateInputDevices()
+
+        // 立即初始化 AppContainer + engine，防止没有 Activity 时按键无处理
+        try {
+            val container = AppContainer.getOrCreate(this)
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val mappings = container.mappingRepository.getCurrent()
+                    container.mappingEngine.updateActiveMappings(mappings)
+                    Log.i(TAG, "🚀 引擎热加载 ${mappings.size} 条映射（${mappings.count { it.enabled }} 启用）")
+                } catch (e: Exception) {
+                    Log.e(TAG, "引擎热加载失败", e)
+                }
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "AppContainer 初始化失败", e)
+        }
     }
 
     private fun enumerateInputDevices() {
@@ -202,16 +221,18 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         val source = sourceToString(event.source)
         val deviceName = try { event.device?.name } catch (_: Exception) { null }
 
-        val container = runCatching { AppContainer.require() }.getOrNull()
-        container?.let {
-            runCatching { it.bluetoothController.dispatchAccessibilityKey(btn) }
-            val engine = runCatching { it.mappingEngine }.getOrNull()
-            if (engine != null && engine.isEventBlocked(btn)) {
+        val container = runCatching { AppContainer.getOrCreate(this) }.getOrNull()
+        if (container == null) {
+            Log.w(TAG, "AppContainer 未就绪，跳过按键处理")
+        } else {
+            runCatching { container.bluetoothController.dispatchAccessibilityKey(btn) }
+            val engine = container.mappingEngine
+            if (engine.isEventBlocked(btn)) {
                 Log.i(TAG, "🚫 拦截按键 ${btn.buttonName} (blocked=true)")
                 if (event.action == KeyEvent.ACTION_DOWN) engine.onButtonEvent(btn)
                 return true
             }
-            if (engine != null && event.action == KeyEvent.ACTION_DOWN) {
+            if (event.action == KeyEvent.ACTION_DOWN) {
                 engine.onButtonEvent(btn)
             }
         }
