@@ -1,63 +1,60 @@
 package com.keymapper.app.ui
 
-import android.provider.Settings
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Color
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
+import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatButton
 import androidx.appcompat.widget.Toolbar
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.RecyclerView
 import com.keymapper.app.AppContainer
-import com.keymapper.app.bluetooth.ConnectionState
-import com.keymapper.app.floating.FloatingWindowManager
-import com.keymapper.app.mapping.MappingAdapter
-import com.keymapper.app.model.HidButtonEvent
+import com.keymapper.app.mapping.MappingRepository
+import com.keymapper.app.model.MappingConfig
 import com.keymapper.app.service.KeyMapperAccessibilityService
 import com.keymapper.app.service.MappingForegroundService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListener {
+class MainActivity : AppCompatActivity() {
 
-    private lateinit var devicesRecycler: RecyclerView
-    private lateinit var tvDevicesStatus: TextView
-    private lateinit var tvDebugLog: TextView
-    private lateinit var tvDebugTitle: TextView
-    private lateinit var deviceAdapter: DeviceAdapter
-    private lateinit var tvProfileLabel: TextView
-    private lateinit var tvProfileName: TextView
-    private lateinit var btnPrevP: AppCompatButton
-    private lateinit var btnNextP: AppCompatButton
-    private lateinit var btnNewP: AppCompatButton
-    private lateinit var btnDelP: AppCompatButton
-    private lateinit var tvMappingCount: TextView
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val PERMISSION_REQUEST_CODE = 100
+    }
+
+    private lateinit var tvStatusBar: TextView
+    private lateinit var appListContainer: LinearLayout
     private lateinit var tvEmptyHint: TextView
-    private lateinit var mappingAdapter: MappingAdapter
     private var app: AppContainer? = null
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val refreshRunnable = object : Runnable {
+        override fun run() { refreshStatusBar(); handler.postDelayed(this, 2000) }
+    }
 
-    private var PERMISSION_REQUEST_CODE = 100
-    private val debugLog = StringBuilder()
-    private var keyCount = 0
-
-    private var floatBtn: AppCompatButton? = null
+    private data class AppCard(
+        val pkg: String,
+        val label: String,
+        val icon: android.graphics.drawable.Drawable?,
+        var profiles: List<String>,
+        var currentProfile: String,
+        var mappings: List<MappingConfig>
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,309 +64,396 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             try {
                 val container = AppContainer.getOrCreate(this@MainActivity)
                 app = container
+                container.mappingRepository.migrateIfNeeded()
                 requestPermissions()
-                withContext(Dispatchers.Main) {
-                    setupDeviceTab()
-                }
-
-                // ---- 监听 Repository Flow 自动更新（必须在 app 赋值之后！）----
-                launch {
-                    app!!.mappingRepository.mappings.collect { list ->
-                        withContext(Dispatchers.Main) {
-                            Log.i(TAG, "mappings flow update: ${list.size} items")
-                            mappingAdapter.submitList(list)
-                            tvMappingCount.text = "  本方案共 ${list.size} 条映射"
-                            tvEmptyHint.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
-                        }
-                    }
-                }
-
-                launch {
-                    try {
-                        app!!.mappingRepository.currentProfileFlow.collect {
-                            Log.i(TAG, "profile changed to: $it")
-                            refreshAll()
-                        }
-                    } catch (e: Exception) {
-                        Log.e(TAG, "profiles flow collect failed", e)
-                    }
-                }
-
+                setupMappingsFlow(container)
                 refreshAll()
-                startEventCollectors()
-                refreshDeviceList()
             } catch (e: Throwable) {
                 Log.e(TAG, "init failed", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "初始化失败: ${e.message}", Toast.LENGTH_LONG).show()
-                }
+                withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "初始化失败: ${e.message}", Toast.LENGTH_LONG).show() }
             }
         }
     }
 
-    private val refreshRunnable = object : Runnable {
-        override fun run() {
-            refreshDiagnosticPanel()
-            handler.postDelayed(this, 2000)
+    private fun setupMappingsFlow(container: AppContainer) {
+        lifecycleScope.launch(Dispatchers.Default) {
+            container.mappingRepository.mappings.collect {
+                withContext(Dispatchers.Main) { rebuildAppList() }
+            }
         }
     }
-    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     override fun onResume() {
         super.onResume()
-        KeyMapperAccessibilityService.addKeyListener(this)
-        refreshDiagnosticPanel()
         refreshAll()
         handler.post(refreshRunnable)
     }
 
     override fun onPause() {
         super.onPause()
-        KeyMapperAccessibilityService.removeKeyListener(this)
         handler.removeCallbacks(refreshRunnable)
     }
 
-    override fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?, rawKeyCode: Int) {
-        runOnUiThread {
-            keyCount++
-            val device = deviceName ?: source
-            appendDebug("[A11yKEY#$keyCount] keyCode=$rawKeyCode action=${if (event.isPressed) "DOWN" else "UP"} src=$source dev=$device -> ${event.buttonName}/${event.buttonId}")
-        }
-    }
-
-    override fun onMotionCaptured(button: String, source: String, deviceName: String?) {
-        runOnUiThread {
-            appendDebug("[A11yMOTION] btn=$button src=$source dev=$deviceName")
-        }
-    }
-
-    override fun onGenericMotionEvent(ev: MotionEvent?): Boolean {
-        ev ?: return super.onGenericMotionEvent(null)
-        val act = when (ev.action) {
-            MotionEvent.ACTION_DOWN -> "DOWN"
-            MotionEvent.ACTION_UP -> "UP"
-            MotionEvent.ACTION_MOVE -> "MOVE"
-            else -> "ACT${ev.action}"
-        }
-        val axes = mutableListOf<String>()
-        for (axis in intArrayOf(MotionEvent.AXIS_X, MotionEvent.AXIS_Y, MotionEvent.AXIS_Z,
-                                MotionEvent.AXIS_RX, MotionEvent.AXIS_RY, MotionEvent.AXIS_RZ,
-                                MotionEvent.AXIS_LTRIGGER, MotionEvent.AXIS_RTRIGGER,
-                                MotionEvent.AXIS_HAT_X, MotionEvent.AXIS_HAT_Y)) {
-            try {
-                val v = ev.getAxisValue(axis)
-                if (v != 0f) axes.add("ax$axis=${"%.2f".format(v)}")
-            } catch (_: Exception) {}
-        }
-        if (axes.isNotEmpty() || ev.action != MotionEvent.ACTION_MOVE) {
-            appendDebug("[MOTION] $act source=${ev.source} ${axes.joinToString(" ")}")
-        }
-        return super.onGenericMotionEvent(ev)
-    }
-
-    private var controllerTouchCount = 0
-
-    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
-        ev ?: return super.dispatchTouchEvent(null)
-        val dev = ev.device
-        val devName = dev?.name ?: "(无设备)"
-        val source = KeyMapperAccessibilityService.sourceToString(ev.source)
-        val isControllerTouch = devName.contains("R1S", true)
-                || devName.contains("Gamepad", true)
-                || devName.contains("Controller", true)
-                || source.contains("GAMEPAD")
-
-        if (isControllerTouch) {
-            controllerTouchCount++
-            if (ev.action == MotionEvent.ACTION_DOWN) {
-                val rx = dev?.getMotionRange(MotionEvent.AXIS_X)
-                val ry = dev?.getMotionRange(MotionEvent.AXIS_Y)
-                val rngX = rx?.let { it.max - it.min } ?: 4095f
-                val rngY = ry?.let { it.max - it.min } ?: 4095f
-                val cx = rx?.let { (it.min + it.max) / 2f } ?: (rngX / 2f)
-                val cy = ry?.let { (it.min + it.max) / 2f } ?: (rngY / 2f)
-                val nx = (ev.rawX - cx) / (rngX / 2f)
-                val ny = (ev.rawY - cy) / (rngY / 2f)
-                appendDebug("[TOUCH#$controllerTouchCount] dev=\"$devName\" src=$source act=DOWN raw=(${ev.rawX.toInt()},${ev.rawY.toInt()}) norm=(${nx.toInt()},${ny.toInt()}) ranges:X=[${rx?.min}..${rx?.max}] Y=[${ry?.min}..${ry?.max}]")
-            }
-            return true
-        }
-        return super.dispatchTouchEvent(ev)
-    }
-
-    override fun dispatchKeyEvent(event: KeyEvent?): Boolean {
-        event ?: return super.dispatchKeyEvent(null)
-        if (event.repeatCount > 0) return super.dispatchKeyEvent(event)
-        keyCount++
-        val btn = KeyMapperAccessibilityService.keyEventToButton(event)
-        val action = if (event.action == KeyEvent.ACTION_DOWN) "DOWN" else "UP  "
-        val source = KeyMapperAccessibilityService.sourceToString(event.source)
-        val mapping = btn?.let { "-> ${it.buttonName}/${it.buttonId}" } ?: ""
-        appendDebug("[KEY#$keyCount] $action keyCode=${event.keyCode} src=$source $mapping")
-        val container = app
-        if (container != null && event.action == KeyEvent.ACTION_DOWN) {
-            runCatching { container.mappingEngine.onButtonEvent(btn) }
-        }
-        return super.dispatchKeyEvent(event)
-    }
-
-    private fun appendDebug(line: String) {
-        debugLog.insert(0, line + "\n")
-        if (debugLog.length > 4000) debugLog.setLength(4000)
-        val log = debugLog.toString()
-        runOnUiThread {
-            try {
-                tvDebugLog.text = log
-                val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
-                tvDebugTitle.text = "🔍 诊断面板 (SDK=${Build.VERSION.SDK_INT}) [A11yKEY=$a11yKey ACT_KEY=$keyCount]"
-            } catch (_: Exception) {}
-        }
-        Log.i(TAG, line)
-    }
-
-    private fun refreshDiagnosticPanel() {
+    private fun refreshStatusBar() {
         val running = KeyMapperAccessibilityService.isRunning()
-        val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
-        val a11yMotion = KeyMapperAccessibilityService.getA11yMotionCount()
-        val flagsInfo = KeyMapperAccessibilityService.getFlagsSummary()
-        val imeInfo = KeyMapperAccessibilityService.getImeStatus()
-        val devices = KeyMapperAccessibilityService.getInputDeviceSummary()
-        val lastKey = KeyMapperAccessibilityService.getLastKeyLog()
-
-        val sb = StringBuilder()
-        sb.appendLine("=== 📊 完整诊断 v1.0.21 ===")
-        sb.appendLine("📱 Android SDK: ${Build.VERSION.SDK_INT}  (API ${Build.VERSION.SDK_INT})")
-        sb.appendLine("♿ 无障碍服务: ${if (running) "✅ 运行中" else "❌ 未运行"}")
-        sb.appendLine("🔢 AccessibilityService 收到按键: $a11yKey  摇杆: $a11yMotion")
-        sb.appendLine("🏷️ Activity dispatchKeyEvent 收到按键: $keyCount")
-        sb.appendLine()
-        sb.appendLine("📋 无障碍 flags:")
-        sb.appendLine("   $flagsInfo")
-        sb.appendLine()
-        if (imeInfo.isNotEmpty()) {
-            sb.appendLine("🔑 IME通道: $imeInfo")
-            sb.appendLine()
-        }
-        sb.appendLine("🔌 输入设备列表:")
-        for (line in devices.lines()) sb.appendLine("   $line")
-        sb.appendLine()
-        if (lastKey.isNotEmpty()) {
-            sb.appendLine("⏱ 最后收到的按键: $lastKey")
-        }
-
+        val floatOn = MappingForegroundService.isRunning()
+        val currentPkg = KeyMapperAccessibilityService.currentPackageName
+        val currentLabel = KeyMapperAccessibilityService.currentPackageLabel
+        val pkgDisplay = if (currentLabel != null) "$currentLabel" else (currentPkg ?: "未知")
         runOnUiThread {
-            tvDebugLog.text = sb.toString()
-            tvDebugTitle.text = "🔍 实时诊断面板 (v1.0.21)"
+            tvStatusBar.text = when {
+                !running -> "⚠️ 无障碍未开"
+                !floatOn -> "⚠️ 悬浮未开 | 当前: $pkgDisplay"
+                else -> "✅ 运行中 | 当前: $pkgDisplay"
+            }
+            tvStatusBar.setTextColor(if (running && floatOn) Color.parseColor("#FF2E7D32") else Color.parseColor("#FFE65100"))
         }
     }
 
-    private fun startEventCollectors() {
-        val container = app ?: return
-
+    private fun refreshAll() {
         lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                container.bluetoothController.buttonEvents.collect { event ->
-                    try { container.mappingEngine.onButtonEvent(event) }
-                    catch (e: Exception) { Log.e(TAG, "button dispatch failed", e) }
-                }
-            } catch (e: Exception) { Log.e(TAG, "buttonEvents collect failed", e) }
+            rebuildAppList()
+        }
+    }
+
+    private suspend fun collectAppCards(): List<AppCard> {
+        val repo = app?.mappingRepository ?: return emptyList()
+        val cards = mutableListOf<AppCard>()
+
+        val currentPkg = KeyMapperAccessibilityService.currentPackageName
+
+        val configured = runCatching { repo.listConfiguredApps() }.getOrDefault(emptyList())
+        // 加上当前前台 APP（即使没配置过也要显示，让用户可以加）
+        val allPkgs = (configured + listOfNotNull(currentPkg, MappingRepository.GLOBAL_PKG)).distinct()
+
+        for (pkg in allPkgs) {
+            val profiles = runCatching { repo.listProfilesFor(pkg) }.getOrDefault(listOf(MappingRepository.DEFAULT_PROFILE))
+            val currentProf = runCatching { repo.currentProfileFor(pkg) }.getOrDefault(MappingRepository.DEFAULT_PROFILE)
+            val mappings = runCatching { repo.getCurrentMappingsFor(pkg) }.getOrDefault(emptyList())
+            val label = when {
+                pkg == MappingRepository.GLOBAL_PKG -> "🌐 全局映射（所有APP生效）"
+                pkg == currentPkg -> "📍 ${appNameFor(pkg)}"
+                else -> appNameFor(pkg)
+            }
+            val icon = when {
+                pkg == MappingRepository.GLOBAL_PKG -> resources.getDrawable(android.R.drawable.ic_menu_myplaces, null)
+                else -> runCatching { packageManager.getApplicationIcon(pkg) }.getOrNull()
+            }
+            cards.add(AppCard(pkg, label, icon, profiles, currentProf, mappings))
         }
 
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                container.mappingRepository.mappings.collect { list ->
-                    container.mappingEngine.updateActiveMappings(list)
-                }
-            } catch (e: Exception) { Log.e(TAG, "mappings collect failed", e) }
-        }
+        // 排序：当前APP置顶，然后其他APP，全局放最后
+        val sorted = cards.sortedWith(compareByDescending<AppCard> { it.pkg == currentPkg }.thenBy {
+            if (it.pkg == MappingRepository.GLOBAL_PKG) 1 else 0
+        })
+        return sorted
+    }
 
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                container.bluetoothController.connectionState.collect { state ->
-                    withContext(Dispatchers.Main) {
-                        val dev = container.bluetoothController.connectedDevice.value
-                        when (state) {
-                            ConnectionState.CONNECTED -> {
-                                tvDevicesStatus.text = "✅ 已选中手柄：${dev?.name ?: "?"}"
-                                tvDevicesStatus.setTextColor(Color.parseColor("#FF4CAF50"))
-                            }
-                            ConnectionState.CONNECTING -> {
-                                tvDevicesStatus.text = "⏳ 连接中…"
-                                tvDevicesStatus.setTextColor(Color.parseColor("#FFFF9800"))
-                            }
-                            ConnectionState.DISCONNECTED -> {
-                                tvDevicesStatus.text = "未选中手柄"
-                                tvDevicesStatus.setTextColor(Color.parseColor("#FF9E9E9E"))
-                            }
+    private suspend fun rebuildAppList() {
+        val cards = collectAppCards()
+        withContext(Dispatchers.Main) {
+            appListContainer.removeAllViews()
+            cards.forEach { appListContainer.addView(makeAppCardView(it)) }
+            tvEmptyHint.visibility = if (cards.isEmpty()) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun makeAppCardView(card: AppCard): LinearLayout {
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            val borderColor = when {
+                card.pkg == KeyMapperAccessibilityService.currentPackageName && card.mappings.any { it.enabled }
+                    -> Color.parseColor("#FF4CAF50")
+                card.mappings.any { it.enabled } -> Color.parseColor("#FF1976D2")
+                else -> Color.parseColor("#FFE0E0E0")
+            }
+            val bgColor = when {
+                card.pkg == KeyMapperAccessibilityService.currentPackageName -> Color.parseColor("#FFF1F8E9")
+                else -> Color.WHITE
+            }
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(8).toFloat()
+                setStroke(2, borderColor)
+                setColor(bgColor)
+            }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                .apply { bottomMargin = dp(8) }
+
+            // ---- 第一行：图标 + 名称 + 状态 ----
+            val row1 = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            val icon = ImageView(this@MainActivity).apply {
+                setImageDrawable(card.icon)
+                val size = dp(40)
+                layoutParams = LinearLayout.LayoutParams(size, size)
+            }
+            row1.addView(icon)
+
+            val nameCol = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { marginStart = dp(10) }
+            }
+            nameCol.addView(TextView(this@MainActivity).apply {
+                text = card.label
+                textSize = 15f
+                setTextColor(Color.parseColor("#FF212121"))
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+            })
+            val statusText = when {
+                card.mappings.isEmpty() -> "尚未配置映射"
+                card.mappings.any { it.enabled } && card.pkg == KeyMapperAccessibilityService.currentPackageName
+                    -> "✅ 当前APP激活中 · ${card.mappings.size} 条"
+                card.mappings.any { it.enabled } -> "✅ 已激活 · ${card.mappings.size} 条"
+                else -> "⏸ 未激活 · ${card.mappings.size} 条"
+            }
+            nameCol.addView(TextView(this@MainActivity).apply {
+                text = statusText
+                textSize = 12f
+                setTextColor(when {
+                    card.mappings.any { it.enabled } -> Color.parseColor("#FF2E7D32")
+                    else -> Color.parseColor("#FF9E9E9E")
+                })
+            })
+            row1.addView(nameCol)
+            addView(row1)
+
+            // ---- 第二行：方案下拉 + 按钮 ----
+            val row2 = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(8), 0, 0)
+            }
+            row2.addView(TextView(this@MainActivity).apply {
+                text = "方案:"
+                textSize = 12f
+                setTextColor(Color.parseColor("#FF616161"))
+            })
+            val profileSpinner = Spinner(this@MainActivity).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    .apply { marginStart = dp(6) }
+                adapter = ArrayAdapter(
+                    this@MainActivity,
+                    android.R.layout.simple_spinner_item,
+                    card.profiles
+                ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+                setSelection(card.profiles.indexOf(card.currentProfile).coerceAtLeast(0))
+                onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                    override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                        val selected = card.profiles[position]
+                        if (selected != card.currentProfile) {
+                            switchProfile(card.pkg, selected)
                         }
-                        deviceAdapter.updateConnectionState(state)
                     }
+                    override fun onNothingSelected(parent: AdapterView<*>?) {}
                 }
-            } catch (e: Exception) { Log.e(TAG, "connectionState collect failed", e) }
-        }
-
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                container.bluetoothController.connectedDevice.collect {
-                    withContext(Dispatchers.Main) { deviceAdapter.notifyDataSetChanged() }
-                }
-            } catch (e: Exception) { Log.e(TAG, "connectedDevice collect failed", e) }
-        }
-    }
-
-    private fun setupDeviceTab() {
-        val container = app ?: return
-        deviceAdapter = DeviceAdapter(
-            selectedAddressProvider = {
-                container.bluetoothController.connectedDevice.value?.address
-            },
-            onSelect = { address ->
-                container.bluetoothController.selectDevice(address)
-                deviceAdapter.notifyDataSetChanged()
-                Toast.makeText(this, "已选中手柄，按手柄键看调试面板", Toast.LENGTH_LONG).show()
-            },
-            onUnselect = {
-                container.bluetoothController.unselectDevice()
-                deviceAdapter.notifyDataSetChanged()
             }
-        )
-        devicesRecycler.adapter = deviceAdapter
+            row2.addView(profileSpinner)
+
+            val btnNew = AppCompatButton(this@MainActivity).apply {
+                text = "➕方案"
+                textSize = 11f
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { marginStart = dp(4) }
+                setOnClickListener { promptNewProfile(card.pkg) }
+            }
+            row2.addView(btnNew)
+
+            val btnMap = AppCompatButton(this@MainActivity).apply {
+                text = "➕映射"
+                textSize = 11f
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+                    .apply { marginStart = dp(4) }
+                setOnClickListener { openNewMappingFor(card.pkg) }
+            }
+            row2.addView(btnMap)
+
+            addView(row2)
+
+            // ---- 第三行：该方案下的映射列表（紧凑显示） ----
+            if (card.mappings.isNotEmpty()) {
+                val row3 = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, dp(6), 0, 0)
+                }
+                card.mappings.take(5).forEach { cfg ->
+                    val mappingRow = LinearLayout(this@MainActivity).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(dp(4), dp(4), dp(4), dp(4))
+                    }
+                    mappingRow.addView(TextView(this@MainActivity).apply {
+                        text = if (cfg.enabled) "✅" else "❌"
+                        textSize = 12f
+                        width = dp(24)
+                    })
+                    mappingRow.addView(TextView(this@MainActivity).apply {
+                        text = "${cfg.button} → ${cfg.actionType.name}" + if (cfg.name.isNotBlank()) "（${cfg.name}）" else ""
+                        textSize = 12f
+                        setTextColor(Color.parseColor("#FF424242"))
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                    })
+                    val toggleBtn = AppCompatButton(this@MainActivity).apply {
+                        text = if (cfg.enabled) "停" else "启"
+                        textSize = 10f
+                        setOnClickListener { toggleMapping(card.pkg, cfg) }
+                    }
+                    mappingRow.addView(toggleBtn)
+                    val editBtn = AppCompatButton(this@MainActivity).apply {
+                        text = "改"
+                        textSize = 10f
+                        setOnClickListener { editMapping(cfg) }
+                    }
+                    mappingRow.addView(editBtn)
+                    val delBtn = AppCompatButton(this@MainActivity).apply {
+                        text = "删"
+                        textSize = 10f
+                        setOnClickListener { deleteMapping(card.pkg, cfg) }
+                    }
+                    mappingRow.addView(delBtn)
+                    row3.addView(mappingRow)
+                }
+                if (card.mappings.size > 5) {
+                    row3.addView(TextView(this@MainActivity).apply {
+                        text = "...还有 ${card.mappings.size - 5} 条"
+                        textSize = 11f
+                        setTextColor(Color.parseColor("#FF9E9E9E"))
+                    })
+                }
+                addView(row3)
+            } else {
+                addView(TextView(this@MainActivity).apply {
+                    text = "  （当前方案还没有映射，点『➕映射』添加）"
+                    textSize = 11f
+                    setTextColor(Color.parseColor("#FFBDBDBD"))
+                    setPadding(0, dp(4), 0, 0)
+                })
+            }
+        }
     }
 
-    private fun refreshDeviceList() {
-        val container = app ?: return
+    private fun switchProfile(pkg: String, profile: String) {
         lifecycleScope.launch(Dispatchers.Default) {
             try {
-                val devices = container.bluetoothController.getCurrentlyConnectedDevices()
-                withContext(Dispatchers.Main) {
-                    deviceAdapter.submitList(devices)
-                    if (devices.isEmpty()) {
-                        tvDevicesStatus.text = "没有发现已配对的蓝牙设备\n请先在系统蓝牙设置里配对手柄"
-                        tvDevicesStatus.setTextColor(Color.parseColor("#FFFF9800"))
-                    }
-                }
+                app?.mappingRepository?.switchProfileFor(pkg, profile)
+                Log.i(TAG, "🔄 切换 profile: pkg=$pkg → $profile")
             } catch (e: Exception) {
-                Log.e(TAG, "refresh failed", e)
+                Log.e(TAG, "switchProfile 失败", e)
             }
         }
     }
+
+    private fun promptNewProfile(pkg: String) {
+        val input = EditText(this).apply {
+            hint = "方案名称（例如：游戏模式 / 浏览模式）"
+        }
+        AlertDialog.Builder(this)
+            .setTitle("为 ${appNameFor(pkg)} 创建新方案")
+            .setView(input)
+            .setPositiveButton("创建并切换") { _, _ ->
+                val name = input.text?.toString()?.trim().orEmpty()
+                if (name.isBlank()) {
+                    Toast.makeText(this, "请输入方案名", Toast.LENGTH_SHORT).show()
+                    return@setPositiveButton
+                }
+                lifecycleScope.launch(Dispatchers.Default) {
+                    try {
+                        app?.mappingRepository?.addProfileFor(pkg, name)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(this@MainActivity, "✅ 已创建并切换到『$name』", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "addProfileFor 失败", e)
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun toggleMapping(pkg: String, cfg: MappingConfig) {
+        lifecycleScope.launch(Dispatchers.Default) {
+            val newCfg = cfg.copy(enabled = !cfg.enabled)
+            val repoPkg = if (pkg == MappingRepository.GLOBAL_PKG) MappingRepository.GLOBAL_PKG else pkg
+            app?.mappingRepository?.addMappingFor(repoPkg, newCfg)
+        }
+    }
+
+    private fun editMapping(cfg: MappingConfig) {
+        startActivity(Intent(this, MappingConfigActivity::class.java).apply {
+            putExtra(MappingConfigActivity.EXTRA_MAPPING_ID, cfg.id)
+        })
+    }
+
+    private fun deleteMapping(pkg: String, cfg: MappingConfig) {
+        AlertDialog.Builder(this)
+            .setTitle("删除这条映射？")
+            .setMessage("『${cfg.button} → ${cfg.actionType.name}』\n（来自方案内的当前APP）")
+            .setPositiveButton("删除") { _, _ ->
+                lifecycleScope.launch(Dispatchers.Default) {
+                    val repoPkg = if (pkg == MappingRepository.GLOBAL_PKG) MappingRepository.GLOBAL_PKG else pkg
+                    app?.mappingRepository?.removeMappingFor(repoPkg, cfg.id)
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun openNewMappingFor(pkg: String) {
+        val intent = Intent(this, MappingConfigActivity::class.java)
+        if (pkg != MappingRepository.GLOBAL_PKG) {
+            intent.putExtra("target_package_preselect", pkg)
+        }
+        startActivity(intent)
+    }
+
+    private fun addNewAppAndCreate() {
+        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val resolveInfoList = packageManager.queryIntentActivities(intent, 0)
+        val items = resolveInfoList.map { it.activityInfo.packageName to loadAppName(it.activityInfo.packageName) }
+            .distinct().sortedBy { it.second }
+
+        val options = items.map { "${it.second} (${it.first})" }.toTypedArray()
+        val pkgs = items.map { it.first }
+        AlertDialog.Builder(this)
+            .setTitle("选择要添加的 APP")
+            .setItems(options) { _, which ->
+                openNewMappingFor(pkgs[which])
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun appNameFor(pkg: String): String = runCatching {
+        val info = packageManager.getApplicationInfo(pkg, 0)
+        packageManager.getApplicationLabel(info).toString()
+    }.getOrDefault(pkg)
+
+    private fun loadAppName(pkg: String): String = try {
+        val info = packageManager.getApplicationInfo(pkg, 0)
+        packageManager.getApplicationLabel(info).toString()
+    } catch (_: Exception) { pkg }
 
     private fun requestPermissions() {
         val perms = mutableListOf<String>()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            perms += Manifest.permission.BLUETOOTH_SCAN
-            perms += Manifest.permission.BLUETOOTH_CONNECT
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            perms += android.Manifest.permission.BLUETOOTH_SCAN
+            perms += android.Manifest.permission.BLUETOOTH_CONNECT
         }
-        perms += Manifest.permission.ACCESS_FINE_LOCATION
-        perms += Manifest.permission.ACCESS_COARSE_LOCATION
-
-        val need = perms.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (need.isNotEmpty()) {
-            runOnUiThread {
-                ActivityCompat.requestPermissions(this, need.toTypedArray(), PERMISSION_REQUEST_CODE)
+        perms += android.Manifest.permission.ACCESS_FINE_LOCATION
+        perms += android.Manifest.permission.ACCESS_COARSE_LOCATION
+        val need = mutableListOf<String>()
+        for (perm in perms) {
+            val result = androidx.core.content.ContextCompat.checkSelfPermission(this@MainActivity, perm)
+            if (result != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                need.add(perm)
             }
+        }
+        if (need.isNotEmpty()) runOnUiThread {
+            androidx.core.app.ActivityCompat.requestPermissions(this, need.toTypedArray(), PERMISSION_REQUEST_CODE)
         }
     }
 
@@ -377,19 +461,22 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         if (MappingForegroundService.isRunning()) {
             MappingForegroundService.stop(this)
             Toast.makeText(this, "⏹ 悬浮窗已停止", Toast.LENGTH_SHORT).show()
-            refreshAll()
-            return
+            refreshAll(); return
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "请在弹出的设置页中允许『显示在其他应用上层』", Toast.LENGTH_LONG).show()
-            startActivity(Intent(
-                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                android.net.Uri.parse("package:$packageName")
-            ))
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M
+            && !android.provider.Settings.canDrawOverlays(this)
+        ) {
+            Toast.makeText(this, "请允许『显示在其他应用上层』", Toast.LENGTH_LONG).show()
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:$packageName")
+                )
+            )
             return
         }
         MappingForegroundService.start(this)
-        Toast.makeText(this, "🎮 悬浮窗已开启，切换到目标 app 试试", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "🎮 悬浮窗已开启", Toast.LENGTH_LONG).show()
         refreshAll()
     }
 
@@ -402,79 +489,48 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         val toolbar = Toolbar(this).apply {
             setBackgroundColor(Color.parseColor("#FF3F51B5"))
             setTitleTextColor(Color.WHITE)
-            title = "K2ER 手柄映射"
+            title = "KeyMapper · 按键映射"
         }
-        root.addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
+        root.addView(toolbar, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
         setSupportActionBar(toolbar)
 
         val statusBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setGravity(android.view.Gravity.CENTER_VERTICAL)
+            gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), dp(8), dp(12), dp(8))
             setBackgroundColor(Color.parseColor("#FFFDE7"))
         }
-
-        val tvA11yStatus = TextView(this).apply {
+        tvStatusBar = TextView(this).apply {
             textSize = 13f
             setTextColor(Color.parseColor("#FF6F00"))
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val btnGoA11y = AppCompatButton(this).apply {
-            text = "去开启"
+        val btnA11y = AppCompatButton(this).apply {
+            text = "激活"
+            textSize = 11f
             setOnClickListener {
-                try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                catch (_: Exception) { Toast.makeText(this@MainActivity, "手动打开系统设置 → 无障碍", Toast.LENGTH_LONG).show() }
-            }
-        }
-
-        val refreshStatusBar = object : Runnable {
-            override fun run() {
-                val running = KeyMapperAccessibilityService.isRunning()
-                val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
-                val defaultIme = KeyMapperAccessibilityService.isKeymapperDefaultIme(this@MainActivity)
-                val imeActive = KeyMapperAccessibilityService.getImeActive()
-                when {
-                    running && defaultIme -> {
-                        statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
-                        tvA11yStatus.text = "✅ 无障碍运行中 ✅ IME已激活 | 按键: $a11yKey"
-                        tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
-                        btnGoA11y.visibility = View.GONE
-                    }
-                    running && !defaultIme -> {
-                        statusBar.setBackgroundColor(Color.parseColor("#FFFFF3E0"))
-                        tvA11yStatus.text = "⚠️ 无障碍已开 但 IME未激活（红色按钮点一下！）"
-                        tvA11yStatus.setTextColor(Color.parseColor("#FFE65100"))
-                        btnGoA11y.text = "去激活IME"
-                        btnGoA11y.visibility = View.VISIBLE
-                        btnGoA11y.setOnClickListener {
-                            try {
-                                val imm = getSystemService(INPUT_METHOD_SERVICE)
-                                    as? android.view.inputmethod.InputMethodManager
-                                imm?.showInputMethodPicker()
-                                    ?: startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-                            } catch (_: Exception) {
-                                startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-                            }
-                        }
-                    }
-                    else -> {
-                        statusBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
-                        tvA11yStatus.text = "⚠️ 请先开启无障碍服务（这是按键捕获的关键）"
-                        tvA11yStatus.setTextColor(Color.parseColor("#FFC62828"))
-                        btnGoA11y.text = "去开启"
-                        btnGoA11y.visibility = View.VISIBLE
-                        btnGoA11y.setOnClickListener {
-                            try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-                            catch (_: Exception) { Toast.makeText(this@MainActivity, "手动打开系统设置 → 无障碍", Toast.LENGTH_LONG).show() }
-                        }
-                    }
+                if (!KeyMapperAccessibilityService.isRunning()) {
+                    startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                } else if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
+                    startActivity(
+                        Intent(
+                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            android.net.Uri.parse("package:$packageName")
+                        )
+                    )
+                } else {
+                    requestOverlayAndStart()
                 }
-                root.postDelayed(this, 2000)
             }
         }
-        refreshStatusBar.run()
-
-        statusBar.addView(tvA11yStatus, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        statusBar.addView(btnGoA11y)
+        val btnFloat = AppCompatButton(this).apply {
+            text = "悬浮"
+            textSize = 11f
+            setOnClickListener { requestOverlayAndStart() }
+        }
+        statusBar.addView(tvStatusBar)
+        statusBar.addView(btnA11y)
+        statusBar.addView(btnFloat)
         root.addView(statusBar)
 
         val scrollView = ScrollView(this).apply { isFillViewport = true }
@@ -484,308 +540,52 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         }
 
         content.addView(TextView(this).apply {
-            text = "已配对的蓝牙手柄（点『选中』指定）"
-            textSize = 16f
+            text = "📱 需要映射的 Apps（每个 APP 可有多个方案）"
+            textSize = 15f
             setTextColor(Color.parseColor("#FF212121"))
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(12), 0, dp(4))
+            setPadding(0, dp(4), 0, dp(8))
         })
 
-        tvDevicesStatus = TextView(this).apply {
-            text = "未选中手柄"
+        appListContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(appListContainer)
+
+        tvEmptyHint = TextView(this).apply {
+            text = "👇 还没有配置任何 APP\n点下方按钮选择一个 APP 并开始创建映射"
             textSize = 13f
             setTextColor(Color.parseColor("#FF9E9E9E"))
-            setPadding(0, dp(2), 0, dp(6))
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(32), dp(8), dp(32))
+            visibility = View.GONE
         }
-        content.addView(tvDevicesStatus)
-
-        devicesRecycler = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@MainActivity)
-        }
-        content.addView(devicesRecycler, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(180)))
-
-        val refreshBtn = AppCompatButton(this).apply {
-            text = "🔄 刷新设备列表"
-            setOnClickListener { refreshDeviceList() }
-        }
-        content.addView(refreshBtn)
-
-        // ---- Profile 管理 + 映射列表 ----
-        tvProfileLabel = TextView(this).apply {
-            textSize = 14f
-            setTextColor(Color.parseColor("#FF1976D2"))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(16), 0, dp(4))
-        }
-        content.addView(tvProfileLabel)
-
-        val profileRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        btnPrevP = AppCompatButton(this).apply {
-            text = "◀"
-            layoutParams = LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        tvProfileName = TextView(this).apply {
-            textSize = 15f; setTextColor(Color.parseColor("#FF1976D2"))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            gravity = android.view.Gravity.CENTER
-            text = "加载中…"
-            setBackgroundColor(Color.parseColor("#FFF0F4FF"))
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(4); marginEnd = dp(4) }
-        }
-        btnNextP = AppCompatButton(this).apply {
-            text = "▶"
-            layoutParams = LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        profileRow.addView(btnPrevP); profileRow.addView(tvProfileName); profileRow.addView(btnNextP)
-        content.addView(profileRow)
-
-        val profileActions = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        btnNewP = AppCompatButton(this).apply {
-            text = "➕新建"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        btnDelP = AppCompatButton(this).apply {
-            text = "🗑删除"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
-        }
-        profileActions.addView(btnNewP); profileActions.addView(btnDelP)
-        content.addView(profileActions)
-
-        tvMappingCount = TextView(this).apply {
-            textSize = 12f; setTextColor(Color.parseColor("#FF616161"))
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        content.addView(tvMappingCount)
-
-        val mappingListFrame = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.WHITE)
-        }
-        val mappingListRecycler = RecyclerView(this).apply {
-            layoutManager = LinearLayoutManager(this@MainActivity)
-        }
-        tvEmptyHint = TextView(this).apply {
-            text = "👇 还没有映射，点下方『➕添加新映射』开始配置"
-            textSize = 12f
-            setTextColor(Color.parseColor("#FF9E9E9E"))
-            gravity = android.view.Gravity.CENTER
-            setPadding(dp(8), dp(24), dp(8), dp(24))
-            visibility = View.VISIBLE
-        }
-        mappingAdapter = MappingAdapter(
-            onToggle = { cfg, enabled ->
-                lifecycleScope.launch(Dispatchers.Default) {
-                    try {
-                        app?.mappingRepository?.update(cfg.copy(enabled = enabled))
-                    } catch (e: Exception) {
-                        Log.e(TAG, "toggle failed", e)
-                    }
-                }
-            },
-            onDelete = { cfg ->
-                lifecycleScope.launch(Dispatchers.Default) {
-                    try {
-                        app?.mappingRepository?.remove(cfg.id)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "delete failed", e)
-                    }
-                }
-            },
-            onEdit = { cfg ->
-                startActivity(Intent(this@MainActivity, MappingConfigActivity::class.java).apply {
-                    putExtra(MappingConfigActivity.EXTRA_MAPPING_ID, cfg.id)
-                })
-            }
-        )
-        mappingListRecycler.adapter = mappingAdapter
-        mappingListFrame.addView(tvEmptyHint)
-        mappingListFrame.addView(mappingListRecycler)
-        content.addView(mappingListFrame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-
-        btnPrevP.setOnClickListener {
-            val repo = app?.mappingRepository
-            if (repo == null) { Toast.makeText(this, "尚未初始化，请稍等", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            lifecycleScope.launch(Dispatchers.Default) {
-                try {
-                    val profiles = repo.listProfiles()
-                    val current = repo.currentProfile()
-                    val idx = profiles.indexOf(current).coerceAtLeast(0)
-                    if (idx > 0) {
-                        repo.switchProfile(profiles[idx - 1])
-                        Log.i(TAG, "switched to ${profiles[idx - 1]}")
-                    }
-                    refreshAll()
-                } catch (e: Exception) {
-                    Log.e(TAG, "prev profile failed", e)
-                    withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "切换失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-                }
-            }
-        }
-        btnNextP.setOnClickListener {
-            val repo = app?.mappingRepository
-            if (repo == null) { Toast.makeText(this, "尚未初始化，请稍等", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            lifecycleScope.launch(Dispatchers.Default) {
-                try {
-                    val profiles = repo.listProfiles()
-                    val current = repo.currentProfile()
-                    val idx = profiles.indexOf(current).coerceAtLeast(0)
-                    if (idx < profiles.size - 1) {
-                        repo.switchProfile(profiles[idx + 1])
-                        Log.i(TAG, "switched to ${profiles[idx + 1]}")
-                    }
-                    refreshAll()
-                } catch (e: Exception) {
-                    Log.e(TAG, "next profile failed", e)
-                    withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "切换失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-                }
-            }
-        }
-        btnNewP.setOnClickListener {
-            val repo = app?.mappingRepository
-            if (repo == null) { Toast.makeText(this, "尚未初始化，请稍等", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            val edit = android.widget.EditText(this).apply { hint = "方案名，如：抖音/原神/浏览器" }
-            android.app.AlertDialog.Builder(this)
-                .setTitle("新建配置方案")
-                .setView(edit)
-                .setPositiveButton("创建") { _, _ ->
-                    val name = edit.text?.toString()?.trim().orEmpty()
-                    if (name.isNotEmpty()) {
-                        lifecycleScope.launch(Dispatchers.Default) {
-                            try {
-                                repo.addProfile(name)
-                                repo.switchProfile(name)
-                                Log.i(TAG, "created and switched to $name")
-                                refreshAll()
-                            } catch (e: Exception) {
-                                Log.e(TAG, "new profile failed", e)
-                                withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "创建失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-                            }
-                        }
-                    }
-                }
-                .setNegativeButton("取消", null).show()
-        }
-        btnDelP.setOnClickListener {
-            val repo = app?.mappingRepository
-            if (repo == null) { Toast.makeText(this, "尚未初始化，请稍等", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            lifecycleScope.launch(Dispatchers.Default) {
-                try {
-                    val name = repo.currentProfile()
-                    if (name == "默认") {
-                        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "不能删除『默认』方案", Toast.LENGTH_SHORT).show() }
-                        return@launch
-                    }
-                    withContext(Dispatchers.Main) {
-                        android.app.AlertDialog.Builder(this@MainActivity)
-                            .setTitle("删除方案")
-                            .setMessage("确定删除『$name』？")
-                            .setPositiveButton("删除") { _, _ ->
-                                lifecycleScope.launch(Dispatchers.Default) {
-                                    try {
-                                        repo.deleteProfile(name)
-                                        repo.switchProfile("默认")
-                                        refreshAll()
-                                    } catch (e: Exception) {
-                                        Log.e(TAG, "delete profile failed", e)
-                                        withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-                                    }
-                                }
-                            }
-                            .setNegativeButton("取消", null).show()
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "del profile failed", e)
-                    withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show() }
-                }
-            }
-        }
+        content.addView(tvEmptyHint)
 
         val btnRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
+            setPadding(0, dp(8), 0, dp(8))
         }
-        val addBtn = AppCompatButton(this).apply {
-            text = "+ 添加新映射"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { startActivity(Intent(this@MainActivity, MappingConfigActivity::class.java)) }
+        val addAppBtn = AppCompatButton(this).apply {
+            text = "➕ 添加APP"
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { addNewAppAndCreate() }
         }
-        floatBtn = AppCompatButton(this).apply {
-            text = "🎮 开启悬浮"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
+        val floatBtn = AppCompatButton(this).apply {
+            text = "🎮 悬浮开关"
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                .apply { marginStart = dp(8) }
             setOnClickListener { requestOverlayAndStart() }
         }
-        btnRow.addView(addBtn)
+        btnRow.addView(addAppBtn)
         btnRow.addView(floatBtn)
-        content.addView(btnRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-
-        tvDebugTitle = TextView(this).apply {
-            text = "🔍 诊断面板"
-            textSize = 14f
-            setTextColor(Color.parseColor("#FFD32F2F"))
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            setPadding(0, dp(16), 0, dp(4))
-        }
-        content.addView(tvDebugTitle)
-
-        tvDebugLog = TextView(this).apply {
-            text = "按手柄按键，看这里有没有事件输出...\n"
-            textSize = 11f
-            setTextColor(Color.parseColor("#FF212121"))
-            setBackgroundColor(Color.WHITE)
-            setPadding(dp(8), dp(8), dp(8), dp(8))
-        }
-        content.addView(tvDebugLog, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220)))
-
-        val clearDebugBtn = AppCompatButton(this).apply {
-            text = "🔄 重置并刷新诊断"
-            setOnClickListener {
-                debugLog.clear()
-                keyCount = 0
-                refreshDiagnosticPanel()
-            }
-        }
-        content.addView(clearDebugBtn)
+        content.addView(btnRow)
 
         scrollView.addView(content)
-        root.addView(scrollView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(
+            scrollView,
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.MATCH_PARENT)
+        )
         return root
     }
 
-    private fun refreshAll() {
-        val repo = app?.mappingRepository ?: run {
-            Log.w(TAG, "app not ready, skip refreshAll")
-            return
-        }
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                val profiles = repo.listProfiles()
-                val current = repo.currentProfile()
-                val idx = profiles.indexOf(current).coerceAtLeast(0)
-                val mappings = repo.getCurrent()
-                Log.i(TAG, "refreshAll: profiles=$profiles current=$current idx=$idx mappings=${mappings.size}")
-                withContext(Dispatchers.Main) {
-                    tvProfileLabel.text = "📋 配置方案（${profiles.size}套）"
-                    tvProfileName.text = "  ${profiles[idx]}  "
-                    btnPrevP.isEnabled = idx > 0
-                    btnNextP.isEnabled = idx < profiles.size - 1
-                    tvMappingCount.text = "  本方案共 ${mappings.size} 条映射"
-                    mappingAdapter.submitList(mappings)
-                    tvEmptyHint.visibility = if (mappings.isEmpty()) View.VISIBLE else View.GONE
-                    floatBtn?.text = if (MappingForegroundService.isRunning()) "⏹ 停止悬浮" else "🎮 开启悬浮"
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "refreshAll failed", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MainActivity, "刷新方案失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    companion object { private const val TAG = "MainActivity" }
 }

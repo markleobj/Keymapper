@@ -17,6 +17,7 @@ import android.widget.TextView
 import androidx.appcompat.widget.AppCompatButton
 import com.keymapper.app.AppContainer
 import com.keymapper.app.R
+import com.keymapper.app.mapping.MappingRepository
 import com.keymapper.app.model.ActionType
 import com.keymapper.app.model.MappingConfig
 import com.keymapper.app.service.KeyMapperAccessibilityService
@@ -255,11 +256,15 @@ class FloatingWindowManager(private val context: Context) {
 
         scope.launch(Dispatchers.Default) {
             val repo = runCatching { AppContainer.getOrCreate(context).mappingRepository }.getOrNull() ?: return@launch
-            val profile = repo.currentProfile()
-            val mappings = repo.getCurrent()
+            val currentPkg = KeyMapperAccessibilityService.currentPackageName
+            val profile = if (currentPkg != null) repo.currentProfileFor(currentPkg) else MappingRepository.DEFAULT_PROFILE
+            val mappings = repo.getActiveMappingsForApp(currentPkg)
             val enabled = mappings.count { it.enabled }
+            val pkgLabel = currentPkg?.let { runCatching {
+                context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(it, 0)).toString()
+            }.getOrNull() } ?: "未知"
             withContext(Dispatchers.Main) {
-                tvProfile?.text = "📋 $profile"
+                tvProfile?.text = "📋 $pkgLabel / $profile"
                 val a11yOn = KeyMapperAccessibilityService.isRunning()
                 tvStatus?.text = buildString {
                     append(if (a11yOn) "✅ 无障碍运行中" else "❌ 无障碍未开")
@@ -335,8 +340,9 @@ class FloatingWindowManager(private val context: Context) {
                 setOnClickListener {
                     scope.launch(Dispatchers.Default) {
                         runCatching {
-                            AppContainer.getOrCreate(context).mappingRepository.update(
-                                cfg.copy(enabled = !cfg.enabled)
+                            val pkg = if (cfg.targetPackage.isNullOrBlank()) MappingRepository.GLOBAL_PKG else cfg.targetPackage
+                            AppContainer.getOrCreate(context).mappingRepository.addMappingFor(
+                                pkg!!, cfg.copy(enabled = !cfg.enabled)
                             )
                         }
                     }
@@ -362,9 +368,7 @@ class FloatingWindowManager(private val context: Context) {
         observeJob?.cancel()
         observeJob = scope.launch(Dispatchers.Default) {
             val repo = runCatching { AppContainer.getOrCreate(context).mappingRepository }.getOrNull() ?: return@launch
-            val job1 = launch { repo.mappings.collectLatest { refreshPanel() } }
-            val job2 = launch { repo.currentProfileFlow.collectLatest { refreshPanel() } }
-            job1.join()
+            repo.mappings.collectLatest { refreshPanel() }
         }
     }
 

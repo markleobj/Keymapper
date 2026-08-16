@@ -123,6 +123,9 @@ class MappingConfigActivity : AppCompatActivity() {
         }
 
         editingId = intent.getStringExtra(EXTRA_MAPPING_ID)
+        if (editingId == null) {
+            selectedTargetPackage = intent.getStringExtra("target_package_preselect")
+        }
         setupActionTypeSpinner()
         setupFields()
         setupListeners()
@@ -242,9 +245,16 @@ class MappingConfigActivity : AppCompatActivity() {
             steps = if (selectedActionType == ActionType.COMBO) comboSteps.toList() else emptyList(),
             targetPackage = selectedTargetPackage
         )
+
+        val repoPkg = if (selectedTargetPackage.isNullOrBlank()) {
+            com.keymapper.app.mapping.MappingRepository.GLOBAL_PKG
+        } else {
+            selectedTargetPackage!!
+        }
+
         lifecycleScope.launch(Dispatchers.Default) {
             try {
-                app!!.mappingRepository.add(config)
+                app!!.mappingRepository.addMappingFor(repoPkg, config)
                 withContext(Dispatchers.Main) {
                     Toast.makeText(this@MappingConfigActivity, "已保存", Toast.LENGTH_SHORT).show()
                     finish()

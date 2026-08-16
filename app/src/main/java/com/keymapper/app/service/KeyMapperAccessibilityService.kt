@@ -308,30 +308,17 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         // 列出所有输入设备（诊断用）
         enumerateInputDevices()
 
-        // 让 AccessibilityService 成为 engine 的唯一真相来源:
-        //  - 进程里不管有没有 Activity，service 活着 → engine 就活着
-        //  - 用户改了映射，DataStore 变了 → engine 自动同步
         try {
             val container = AppContainer.getOrCreate(this)
 
             serviceScope.launch {
+                container.mappingRepository.migrateIfNeeded()
                 try {
-                    container.mappingRepository.mappings.collectLatest { list ->
-                        container.mappingEngine.updateActiveMappings(list)
-                        Log.i(TAG, "🔄 引擎同步: ${list.size} 条映射（${list.count { it.enabled }} 启用）")
+                    container.mappingRepository.mappings.collectLatest {
+                        refreshEngineForCurrentApp(container)
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "mappings flow collect 异常", e)
-                }
-            }
-
-            serviceScope.launch {
-                try {
-                    container.mappingRepository.currentProfileFlow.collectLatest { profile ->
-                        Log.i(TAG, "🔄 切换方案: $profile")
-                    }
-                } catch (e: Exception) {
-                    Log.e(TAG, "profile flow collect 异常", e)
                 }
             }
 
@@ -346,7 +333,13 @@ class KeyMapperAccessibilityService : AccessibilityService() {
                 }
             }
 
-            Log.i(TAG, "🚀 引擎已挂载，监听 DataStore 变化")
+            // 初始加载
+            serviceScope.launch {
+                refreshForegroundPackage()
+                refreshEngineForCurrentApp(container)
+            }
+
+            Log.i(TAG, "🚀 引擎已挂载，APP级Profile模式")
         } catch (e: Throwable) {
             Log.e(TAG, "AppContainer 初始化失败", e)
         }
@@ -454,14 +447,34 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         Log.i(TAG, "🔌 $inputDeviceSummary")
     }
 
+    private suspend fun refreshEngineForCurrentApp(container: com.keymapper.app.AppContainer) {
+        val pkg = currentPackageName
+        val profile = pkg?.let { container.mappingRepository.currentProfileFor(it) }
+        val list = container.mappingRepository.getActiveMappingsForApp(pkg)
+        container.mappingEngine.updateActiveMappings(list)
+        Log.i(TAG, "🔄 引擎加载: pkg=${pkg ?: "?"} profile=${profile ?: "?"} 共${list.size}条（${list.count { it.enabled }}启用）")
+    }
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         val type = event.eventType
-        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
-            && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
 
         val pkg = event.packageName?.toString() ?: return
         if (pkg == MY_PACKAGE) return
+
+        val oldPkg = currentPackageName
+        if (pkg != oldPkg) {
+            currentPackageName = pkg
+            currentPackageLabel = runCatching {
+                packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+            }.getOrNull()
+            Log.i(TAG, "📱 前台APP切换: $oldPkg → $pkg (${currentPackageLabel ?: "?"})")
+            runCatching {
+                val container = com.keymapper.app.AppContainer.getOrCreate(this)
+                serviceScope.launch { refreshEngineForCurrentApp(container) }
+            }
+        }
     }
 
     override fun onInterrupt() {}
