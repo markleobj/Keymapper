@@ -26,6 +26,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.keymapper.app.AppContainer
 import com.keymapper.app.bluetooth.ConnectionState
+import com.keymapper.app.floating.FloatingWindowManager
 import com.keymapper.app.mapping.MappingAdapter
 import com.keymapper.app.model.HidButtonEvent
 import com.keymapper.app.service.KeyMapperAccessibilityService
@@ -365,6 +366,19 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         }
     }
 
+    private fun requestOverlayAndStart() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            Toast.makeText(this, "请在弹出的设置页中允许『显示在其他应用上层』", Toast.LENGTH_LONG).show()
+            startActivity(Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")
+            ))
+            return
+        }
+        FloatingWindowManager.getInstance(this).show()
+        Toast.makeText(this, "🎮 悬浮窗已开启，切换到目标 app 试试", Toast.LENGTH_LONG).show()
+    }
+
     private fun buildProgrammaticUI(): LinearLayout {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -649,11 +663,22 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             }
         }
 
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
         val addBtn = AppCompatButton(this).apply {
             text = "+ 添加新映射"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             setOnClickListener { startActivity(Intent(this@MainActivity, MappingConfigActivity::class.java)) }
         }
-        content.addView(addBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val floatBtn = AppCompatButton(this).apply {
+            text = "🎮 开启悬浮"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
+            setOnClickListener { requestOverlayAndStart() }
+        }
+        btnRow.addView(addBtn)
+        btnRow.addView(floatBtn)
+        content.addView(btnRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         tvDebugTitle = TextView(this).apply {
             text = "🔍 诊断面板"

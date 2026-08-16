@@ -85,16 +85,24 @@ class MappingAdapter(
 
         fun bind(config: MappingConfig) {
             val displayTitle = config.name.ifBlank { config.button }
-            tvButton.text = displayTitle
+            tvButton.text = (if (config.enabled) "🟢 " else "⚪ ") + displayTitle
+            tvButton.setTextColor(
+                if (config.enabled) Color.parseColor("#FF2E7D32")
+                else Color.parseColor("#FF9E9E9E")
+            )
             val typeCn = when (config.actionType) {
                 com.keymapper.app.model.ActionType.TAP -> "点击"
                 com.keymapper.app.model.ActionType.LONG_PRESS -> "长按"
                 com.keymapper.app.model.ActionType.SWIPE -> "滑动"
                 com.keymapper.app.model.ActionType.MOUSE_MOVE -> "鼠标模拟"
-                com.keymapper.app.model.ActionType.COMBO -> "组合动作(${config.steps.size}步)"
+                com.keymapper.app.model.ActionType.COMBO -> "组合(${config.steps.size}步)"
                 com.keymapper.app.model.ActionType.DO_NOTHING -> "只屏蔽"
             }
             tvAction.text = "${config.button} · $typeCn · (${"%.2f".format(config.targetX)}, ${"%.2f".format(config.targetY)})"
+            tvAction.setTextColor(
+                if (config.enabled) Color.parseColor("#FF616161")
+                else Color.parseColor("#FFBDBDBD")
+            )
 
             switchEnabled.setOnCheckedChangeListener(null)
             switchEnabled.isChecked = config.enabled
