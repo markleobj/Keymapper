@@ -30,8 +30,5 @@
     <string name="request_accessibility">请先开启无障碍服务</string>
     <string name="open_accessibility_settings">前往设置</string>
     <string name="permission_needed">需要蓝牙权限</string>
-    <string name="keyboard_name">KeyMapper Keyboard</string>
     <string name="action_swipe">滑动</string>
-    <string name="go_ime_settings">前往输入法设置</string>
-    <string name="switch_ime">切换到 KeyMapper 输入法</string>
 </resources>

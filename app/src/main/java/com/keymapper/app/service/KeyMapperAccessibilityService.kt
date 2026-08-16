@@ -3,7 +3,6 @@ package com.keymapper.app.service
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
-import android.accessibilityservice.InputMethod
 import android.content.Context
 import android.graphics.Path
 import android.os.Build
@@ -57,10 +56,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         fun getInputDeviceSummary() = inputDeviceSummary
 
         @Volatile
-        private var imeStatus: String = ""
-        fun getImeStatus() = imeStatus
-
-        @Volatile
         private var lastKeyLog: String = ""
         fun getLastKeyLog() = lastKeyLog
 
@@ -73,27 +68,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         @JvmStatic
         var currentPackageLabel: String? = null
             private set
-
-        @JvmStatic
-        fun getImeForwardCount(): Int {
-            return try { com.keymapper.app.inputmethod.KeyMapperImeService.getImeKeyCount() } catch (_: Exception) { 0 }
-        }
-
-        @JvmStatic
-        fun getImeActive(): Boolean {
-            return try { com.keymapper.app.inputmethod.KeyMapperImeService.isActive() } catch (_: Exception) { false }
-        }
-
-        @JvmStatic
-        fun isKeymapperDefaultIme(context: Context): Boolean {
-            return try {
-                val defaultId = android.provider.Settings.Secure.getString(
-                    context.contentResolver,
-                    android.provider.Settings.Secure.DEFAULT_INPUT_METHOD
-                )
-                defaultId?.contains("keymapper", ignoreCase = true) == true
-            } catch (_: Exception) { false }
-        }
 
         @JvmStatic
         fun refreshForegroundPackage() {
@@ -177,7 +151,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     private var screenWidth: Int = 0
     private var screenHeight: Int = 0
-    private var imeBridge: InputMethod? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val MY_PACKAGE = "com.keymapper.app"
 
@@ -283,13 +256,11 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         // 必须在 onServiceConnected 里主动设置才能激活按键过滤。
         val info = serviceInfo
         val FLAG_DEFAULT = 0x00000001
-        val FLAG_INPUT_METHOD_EDITOR = 0x00010000
         info.flags = (info.flags
                 or FLAG_DEFAULT
                 or AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
                 or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
-                or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-                or FLAG_INPUT_METHOD_EDITOR)
+                or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS)
         info.eventTypes = AccessibilityEvent.TYPES_ALL_MASK
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_ALL_MASK
         info.notificationTimeout = 100
@@ -298,10 +269,9 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         val flags = serviceInfo.flags
         val hasFilterKey = flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
         val hasRetrieveWin = flags and AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS != 0
-        val hasImeEditor = flags and FLAG_INPUT_METHOD_EDITOR != 0
 
         flagsSummary = "flags=0x${flags.toString(16)} " +
-                "[filterKey=$hasFilterKey retrieveWin=$hasRetrieveWin imeEditor=$hasImeEditor]"
+                "[filterKey=$hasFilterKey retrieveWin=$hasRetrieveWin]"
         Log.i(TAG, "✅ K2ER Service connected ${screenWidth}x${screenHeight}, SDK=${Build.VERSION.SDK_INT}")
         Log.i(TAG, "📋 $flagsSummary")
 
@@ -479,15 +449,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() {}
 
-    @androidx.annotation.RequiresApi(Build.VERSION_CODES.R)
-    override fun onCreateInputMethod(): InputMethod {
-        val result = super.onCreateInputMethod()
-        imeBridge = result
-        imeStatus = "✅ onCreateInputMethod 成功 (bridge=${result != null})"
-        Log.i(TAG, imeStatus)
-        return result
-    }
-
     override fun onKeyEvent(event: KeyEvent?): Boolean {
         if (event == null) return false
         if (event.repeatCount > 0) return false
@@ -527,7 +488,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         instance = null
-        imeBridge = null
         serviceScope.cancel("service destroyed")
         super.onDestroy()
     }
