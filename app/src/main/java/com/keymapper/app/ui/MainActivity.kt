@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -24,6 +25,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var app: KeyMapperApp
+    private lateinit var deviceAdapter: DeviceAdapter
+    private lateinit var mappingAdapter: MappingAdapter
 
     private var PERMISSION_REQUEST_CODE = 100
 
@@ -34,15 +37,19 @@ class MainActivity : AppCompatActivity() {
         app = application as KeyMapperApp
 
         setupToolbar()
+        requestPermissions()
         setupDeviceTab()
         setupMappingTab()
         setupAccessibilityCheck()
-        requestPermissions()
     }
 
     override fun onResume() {
         super.onResume()
         setupAccessibilityCheck()
+        try {
+            setupMappingTab()
+        } catch (_: Exception) {
+        }
     }
 
     private fun setupToolbar() {
@@ -51,71 +58,135 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupAccessibilityCheck() {
-        if (!KeyMapperAccessibilityService.isRunning()) {
-            binding.accessibilityCard.visibility = android.view.View.VISIBLE
-            binding.btnOpenSettings.setOnClickListener {
-                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        try {
+            if (!KeyMapperAccessibilityService.isRunning()) {
+                binding.accessibilityCard.visibility = android.view.View.VISIBLE
+                binding.btnOpenSettings.setOnClickListener {
+                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
+            } else {
+                binding.accessibilityCard.visibility = android.view.View.GONE
             }
-        } else {
-            binding.accessibilityCard.visibility = android.view.View.GONE
+            val serviceRunning = KeyMapperAccessibilityService.isRunning()
+            app.mappingEngine.setEnabled(
+                serviceRunning &&
+                    app.bluetoothController.connectionState.value == ConnectionState.CONNECTED
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "accessibility check failed", e)
         }
-        val serviceRunning = KeyMapperAccessibilityService.isRunning()
-        app.mappingEngine.setEnabled(serviceRunning && app.bluetoothController.connectionState.value == ConnectionState.CONNECTED)
     }
 
     private fun setupDeviceTab() {
-        val adapter = DeviceAdapter(
+        deviceAdapter = DeviceAdapter(
             onConnect = { address ->
                 lifecycleScope.launch {
-                    if (app.bluetoothController.connect(address)) {
-                        Toast.makeText(this@MainActivity, "正在连接…", Toast.LENGTH_SHORT).show()
-                    } else {
-                        Toast.makeText(this@MainActivity, "连接失败", Toast.LENGTH_SHORT).show()
+                    try {
+                        if (app.bluetoothController.connect(address)) {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "正在连接…",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            Toast.makeText(
+                                this@MainActivity,
+                                "连接失败",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    } catch (e: SecurityException) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "请先授予蓝牙权限",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        requestPermissions()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "connect failed", e)
+                        Toast.makeText(
+                            this@MainActivity,
+                            "连接出错: ${e.message}",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             },
             onDisconnect = {
-                app.bluetoothController.disconnect()
+                try {
+                    app.bluetoothController.disconnect()
+                } catch (e: Exception) {
+                    Log.e(TAG, "disconnect failed", e)
+                }
             }
         )
         binding.devicesRecycler.layoutManager = LinearLayoutManager(this)
-        binding.devicesRecycler.adapter = adapter
+        binding.devicesRecycler.adapter = deviceAdapter
 
         lifecycleScope.launch {
-            // Collect connection state + devices
-            app.bluetoothController.connectionState.collect { state ->
-                adapter.updateConnectionState(state)
-                setupAccessibilityCheck()
+            try {
+                app.bluetoothController.connectionState.collect { state ->
+                    deviceAdapter.updateConnectionState(state)
+                    setupAccessibilityCheck()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "connectionState collect failed", e)
             }
         }
         lifecycleScope.launch {
-            app.bluetoothController.connectedDevice.collect { device ->
-                adapter.updateConnectedDevice(device?.address)
+            try {
+                app.bluetoothController.connectedDevice.collect { device ->
+                    deviceAdapter.updateConnectedDevice(device?.address)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "connectedDevice collect failed", e)
             }
-        }
-        lifecycleScope.launch {
-            val devices = app.bluetoothController.getPairedDevices()
-            adapter.submitList(devices)
         }
 
         binding.btnRefreshDevices.setOnClickListener {
             lifecycleScope.launch {
-                val devices = app.bluetoothController.getPairedDevices()
-                adapter.submitList(devices)
+                try {
+                    val devices = app.bluetoothController.getPairedDevices()
+                    deviceAdapter.submitList(devices)
+                } catch (e: SecurityException) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "请先授予蓝牙权限",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    requestPermissions()
+                } catch (e: Exception) {
+                    Log.e(TAG, "refresh devices failed", e)
+                    Toast.makeText(
+                        this@MainActivity,
+                        "获取设备失败: ${e.message}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
             }
         }
     }
 
     private fun setupMappingTab() {
-        val adapter = MappingAdapter(
+        if (::mappingAdapter.isInitialized) return
+
+        mappingAdapter = MappingAdapter(
             onToggle = { config, enabled ->
                 lifecycleScope.launch {
-                    app.mappingRepository.update(config.copy(enabled = enabled))
+                    try {
+                        app.mappingRepository.update(config.copy(enabled = enabled))
+                    } catch (e: Exception) {
+                        Log.e(TAG, "toggle mapping failed", e)
+                    }
                 }
             },
             onDelete = { config ->
                 lifecycleScope.launch {
-                    app.mappingRepository.remove(config.id)
+                    try {
+                        app.mappingRepository.remove(config.id)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "delete mapping failed", e)
+                    }
                 }
             },
             onEdit = { config ->
@@ -125,12 +196,17 @@ class MainActivity : AppCompatActivity() {
             }
         )
         binding.mappingsRecycler.layoutManager = LinearLayoutManager(this)
-        binding.mappingsRecycler.adapter = adapter
+        binding.mappingsRecycler.adapter = mappingAdapter
 
         lifecycleScope.launch {
-            app.mappingRepository.mappings.collect { list ->
-                adapter.submitList(list)
-                binding.emptyMappings.visibility = if (list.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+            try {
+                app.mappingRepository.mappings.collect { list ->
+                    mappingAdapter.submitList(list)
+                    binding.emptyMappings.visibility =
+                        if (list.isEmpty()) android.view.View.VISIBLE else android.view.View.GONE
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "mappings collect failed", e)
             }
         }
 
@@ -148,9 +224,15 @@ class MainActivity : AppCompatActivity() {
         perms += Manifest.permission.ACCESS_FINE_LOCATION
         perms += Manifest.permission.ACCESS_COARSE_LOCATION
 
-        val need = perms.filter { ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED }
+        val need = perms.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
         if (need.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, need.toTypedArray(), PERMISSION_REQUEST_CODE)
         }
+    }
+
+    companion object {
+        private const val TAG = "MainActivity"
     }
 }
