@@ -41,6 +41,18 @@ class CoordinatePickerOverlay(private val context: Context) {
         context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var overlayView: View? = null
 
+    private fun bringK2erToFront() {
+        try {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+            Log.i(TAG, "🔙 K2ER task 已拉回前台")
+        } catch (e: Throwable) {
+            Log.e(TAG, "拉回 K2ER 失败", e)
+        }
+    }
+
     @SuppressLint("InflateParams", "ClickableViewAccessibility")
     fun show() {
         if (current != null) {
@@ -101,6 +113,7 @@ class CoordinatePickerOverlay(private val context: Context) {
                     Toast.makeText(context, String.format("已拾取 X=%.2f Y=%.2f", nx, ny), Toast.LENGTH_SHORT).show()
                     remove()
                     current = null
+                    bringK2erToFront()
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val rawX = event.rawX
@@ -118,6 +131,7 @@ class CoordinatePickerOverlay(private val context: Context) {
             sendGlobalBroadcast(Intent(ACTION_PICK_CANCEL))
             remove()
             current = null
+            bringK2erToFront()
         }
 
         try {
