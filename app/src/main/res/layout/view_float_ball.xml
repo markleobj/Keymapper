@@ -1,12 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
-<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/float_ball"
     android:layout_width="48dp"
     android:layout_height="48dp"
     android:background="@drawable/bg_float_ball"
-    android:gravity="center"
-    android:text="🎮"
-    android:textSize="20sp"
-    android:textColor="#FFFFFFFF"
     android:clickable="true"
-    android:focusable="true" />
+    android:focusable="true"
+    android:padding="4dp">
+
+    <TextView
+        android:id="@+id/ball_indicator"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:text="○"
+        android:textSize="22sp"
+        android:textColor="#FF9E9E9E" />
+
+</FrameLayout>

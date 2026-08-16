@@ -191,4 +191,8 @@ class MappingEngine(
     private fun Long.ifMinus(default: Long): Long = if (this > 0) this else default
 
     fun getButtonPressed(): String? = buttonStateMap.entries.firstOrNull { it.value }?.key
+
+    fun onJoystickMove(axisX: Float, axisY: Float, currentPkg: String?) {
+        if (!enabled) return
+    }
 }
