@@ -37,6 +37,7 @@ class MappingConfigActivity : AppCompatActivity() {
     private lateinit var etName: EditText
     private lateinit var etTargetX: EditText
     private lateinit var etTargetY: EditText
+    private lateinit var targetGroup: LinearLayout
     private lateinit var etDuration: EditText
     private lateinit var durationGroup: LinearLayout
     private lateinit var btnPickButton: AppCompatButton
@@ -126,6 +127,7 @@ class MappingConfigActivity : AppCompatActivity() {
         etDuration.setText("500")
         durationGroup.visibility = View.GONE
         comboGroup.visibility = View.GONE
+        targetGroup.visibility = View.VISIBLE
     }
 
     private fun setupListeners() {
@@ -138,6 +140,8 @@ class MappingConfigActivity : AppCompatActivity() {
                 durationGroup.visibility = if (selectedActionType == ActionType.LONG_PRESS
                         || selectedActionType == ActionType.MOUSE_MOVE) View.VISIBLE else View.GONE
                 comboGroup.visibility = if (selectedActionType == ActionType.COMBO) View.VISIBLE else View.GONE
+                targetGroup.visibility = if (selectedActionType == ActionType.COMBO
+                        || selectedActionType == ActionType.DO_NOTHING) View.GONE else View.VISIBLE
             }
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
@@ -363,8 +367,9 @@ class MappingConfigActivity : AppCompatActivity() {
         spinnerAction = Spinner(this)
         content.addView(spinnerAction)
 
-        content.addView(textLabel("📍 目标坐标 (0~1)"))
-        content.addView(TextView(this).apply {
+        targetGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        targetGroup.addView(textLabel("📍 目标坐标 (0~1)"))
+        targetGroup.addView(TextView(this).apply {
             text = "X=0 屏幕最左 / X=1 最右  ·  Y=0 最上 / Y=1 最下"
             textSize = 10f; setTextColor(Color.parseColor("#FF9E9E9E"))
         })
@@ -381,7 +386,8 @@ class MappingConfigActivity : AppCompatActivity() {
         }
         coordRow.addView(etTargetX)
         coordRow.addView(etTargetY)
-        content.addView(coordRow)
+        targetGroup.addView(coordRow)
+        content.addView(targetGroup)
 
         durationGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         durationGroup.addView(textLabel("⏱ 时长 (ms)"))
