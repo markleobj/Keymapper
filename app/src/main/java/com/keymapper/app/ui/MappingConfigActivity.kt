@@ -55,6 +55,7 @@ class MappingConfigActivity : AppCompatActivity() {
     private var blocked: Boolean = true
     private var configName: String = ""
     private val comboSteps = mutableListOf<ActionStep>()
+    private var pendingPickStepIndex: Int = -1
 
     private val buttonPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
@@ -68,6 +69,23 @@ class MappingConfigActivity : AppCompatActivity() {
         } else {
             Log.i("MappingConfig", "buttonPicker cancelled or failed: rc=${result.resultCode}")
         }
+    }
+
+    private val coordPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val nx = result.data?.getFloatExtra(CoordinatePickerActivity.EXTRA_PICKED_X, 0f) ?: 0f
+            val ny = result.data?.getFloatExtra(CoordinatePickerActivity.EXTRA_PICKED_Y, 0f) ?: 0f
+            Log.i("MappingConfig", "coordPicker result: ($nx, $ny) step=$pendingPickStepIndex")
+            Toast.makeText(this, String.format("已拾取 X=%.2f Y=%.2f", nx, ny), Toast.LENGTH_SHORT).show()
+            if (pendingPickStepIndex >= 0 && pendingPickStepIndex < comboSteps.size) {
+                comboSteps[pendingPickStepIndex] = comboSteps[pendingPickStepIndex].copy(targetX = nx, targetY = ny)
+                renderComboSteps()
+            } else {
+                etTargetX.setText(nx.toString())
+                etTargetY.setText(ny.toString())
+            }
+        }
+        pendingPickStepIndex = -1
     }
 
     companion object {
@@ -280,6 +298,16 @@ class MappingConfigActivity : AppCompatActivity() {
             }
         }
         row.addView(etY)
+        val btnStepPick = AppCompatButton(this).apply {
+            text = "📍"
+            textSize = 11f
+            layoutParams = LinearLayout.LayoutParams(dp(36), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(2) }
+            setOnClickListener {
+                pendingPickStepIndex = index
+                coordPickerLauncher.launch(Intent(this@MappingConfigActivity, CoordinatePickerActivity::class.java))
+            }
+        }
+        row.addView(btnStepPick)
         val etDelay = EditText(this).apply {
             hint = "延时ms"
             setText(step.delayMs.toString())
@@ -373,7 +401,7 @@ class MappingConfigActivity : AppCompatActivity() {
             text = "X=0 屏幕最左 / X=1 最右  ·  Y=0 最上 / Y=1 最下"
             textSize = 10f; setTextColor(Color.parseColor("#FF9E9E9E"))
         })
-        val coordRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val coordRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         etTargetX = EditText(this).apply {
             hint = "X"
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -384,8 +412,21 @@ class MappingConfigActivity : AppCompatActivity() {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
         }
+        val btnPickCoord = AppCompatButton(this).apply {
+            text = "📍拾取"
+            textSize = 12f
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { marginStart = dp(8) }
+            setOnClickListener {
+                pendingPickStepIndex = -1
+                coordPickerLauncher.launch(Intent(this@MappingConfigActivity, CoordinatePickerActivity::class.java))
+            }
+        }
         coordRow.addView(etTargetX)
         coordRow.addView(etTargetY)
+        coordRow.addView(btnPickCoord)
         targetGroup.addView(coordRow)
         content.addView(targetGroup)
 

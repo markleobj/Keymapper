@@ -35,6 +35,9 @@
         <activity android:name=".ui.MappingConfigActivity" android:exported="false" />
         <activity android:name=".ui.ButtonPickerActivity" android:exported="false"
               android:windowSoftInputMode="adjustResize|stateVisible" />
+        <activity android:name=".ui.CoordinatePickerActivity" android:exported="false"
+              android:theme="@style/Theme.Keymapper.Picker"
+              android:excludeFromRecents="true" />
         <service android:name=".service.KeyMapperAccessibilityService"
             android:exported="false"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
