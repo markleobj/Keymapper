@@ -24,6 +24,7 @@ import androidx.appcompat.widget.Toolbar
 import androidx.lifecycle.lifecycleScope
 import com.keymapper.app.AppContainer
 import com.keymapper.app.mapping.MappingRepository
+import com.keymapper.app.mapping.ShellExecutor
 import com.keymapper.app.model.MappingConfig
 import com.keymapper.app.service.KeyMapperAccessibilityService
 import com.keymapper.app.service.MappingForegroundService
@@ -95,18 +96,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshStatusBar() {
-        val running = KeyMapperAccessibilityService.isRunning()
+        val hasShell = ShellExecutor.hasSecureSettingsPermission()
         val floatOn = MappingForegroundService.isRunning()
+        val hasA11y = KeyMapperAccessibilityService.isRunning()
         val currentPkg = KeyMapperAccessibilityService.currentPackageName
         val currentLabel = KeyMapperAccessibilityService.currentPackageLabel
         val pkgDisplay = if (currentLabel != null) "$currentLabel" else (currentPkg ?: "未知")
         runOnUiThread {
             tvStatusBar.text = when {
-                !running -> "⚠️ 无障碍未开"
-                !floatOn -> "⚠️ 悬浮未开 | 当前: $pkgDisplay"
-                else -> "✅ 运行中 | 当前: $pkgDisplay"
+                hasShell && floatOn -> "✅ Shell+悬浮 | $pkgDisplay"
+                hasA11y && floatOn -> "♿ A11y+悬浮 | $pkgDisplay"
+                hasShell -> "✅ Shell已授权 | 悬浮未开"
+                hasA11y -> "♿ 无障碍已开 | 悬浮未开"
+                else -> "⚠️ 未激活 — 点『授权』用ADB激活"
             }
-            tvStatusBar.setTextColor(if (running && floatOn) Color.parseColor("#FF2E7D32") else Color.parseColor("#FFE65100"))
+            tvStatusBar.setTextColor(
+                when {
+                    hasShell || (hasA11y && floatOn) -> Color.parseColor("#FF2E7D32")
+                    hasA11y -> Color.parseColor("#FF1976D2")
+                    else -> Color.parseColor("#FFE65100")
+                }
+            )
         }
     }
 
@@ -480,6 +490,46 @@ class MainActivity : AppCompatActivity() {
         refreshAll()
     }
 
+    private fun showActivationDialog() {
+        val hasShell = ShellExecutor.hasSecureSettingsPermission()
+        val hasA11y = KeyMapperAccessibilityService.isRunning()
+        val pkg = packageName
+        val adbCmd = "adb shell pm grant $pkg android.permission.WRITE_SECURE_SETTINGS"
+
+        val msg = buildString {
+            appendLine("【当前状态】")
+            appendLine("  ${if (hasShell) "✅" else "❌"} Shell 注入 (WRITE_SECURE_SETTINGS)")
+            appendLine("  ${if (hasA11y) "✅" else "❌"} 无障碍服务 (fallback)")
+            appendLine()
+            if (hasShell) {
+                appendLine("🎉 已激活！用『悬浮』按钮开启悬浮窗即可使用。")
+            } else {
+                appendLine("【推荐方式：ADB 激活】（一次授权，永久有效）")
+                appendLine()
+                appendLine("1. 手机连电脑，打开 USB 调试")
+                appendLine("2. 电脑上执行：")
+                appendLine("   $adbCmd")
+                appendLine()
+                appendLine("【备选：开启无障碍服务】")
+                appendLine("   如果不想用 ADB，可以开启无障碍服务作为 fallback")
+            }
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("🔑 激活 KeyMapper")
+            .setMessage(msg)
+            .setPositiveButton("复制ADB命令") { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("ADB命令", adbCmd))
+                Toast.makeText(this, "✅ 已复制！去电脑上执行即可", Toast.LENGTH_LONG).show()
+            }
+            .setNeutralButton("开启无障碍") { _, _ ->
+                startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            .setNegativeButton("关闭", null)
+            .show()
+    }
+
     private fun buildProgrammaticUI(): LinearLayout {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -506,22 +556,9 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
         val btnA11y = AppCompatButton(this).apply {
-            text = "激活"
+            text = "授权"
             textSize = 11f
-            setOnClickListener {
-                if (!KeyMapperAccessibilityService.isRunning()) {
-                    startActivity(Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                } else if (!android.provider.Settings.canDrawOverlays(this@MainActivity)) {
-                    startActivity(
-                        Intent(
-                            android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            android.net.Uri.parse("package:$packageName")
-                        )
-                    )
-                } else {
-                    requestOverlayAndStart()
-                }
-            }
+            setOnClickListener { showActivationDialog() }
         }
         val btnFloat = AppCompatButton(this).apply {
             text = "悬浮"
