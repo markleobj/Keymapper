@@ -70,37 +70,16 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
             }
         }
 
-        appendLog("✅ ButtonPickerActivity 已启动")
+        appendLog("✅ 按键录制界面已启动 (K2ER 模式)")
         appendLog("ℹ️ Android SDK = ${android.os.Build.VERSION.SDK_INT}")
+        appendLog("💡 确保无障碍服务已开启，然后直接按手柄按键即可")
     }
-
-    private var imeFocusTarget: android.widget.EditText? = null
 
     override fun onResume() {
         super.onResume()
         KeyMapperAccessibilityService.addKeyListener(this)
         mainHandler.post(statusRunnable)
         appendLog("🔔 已向无障碍服务注册按键监听器")
-        forceImeConnection()
-    }
-
-    private fun forceImeConnection() {
-        val target = imeFocusTarget ?: return
-        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-
-        for ((index, delay) in listOf(0L, 200L, 600L, 1200L).withIndex()) {
-            target.postDelayed({
-                target.requestFocus()
-                target.requestFocusFromTouch()
-                val showing = imm.showSoftInput(target, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-                val count = com.keymapper.app.inputmethod.KeyMapperImeService.getImeKeyCount()
-                appendLog("⌨️ #${index+1} requestFocus=${target.hasFocus()} showSoftInput=$showing IME捕获累计=$count")
-                if (index == 3) {
-                    val active = imm.isActive
-                    appendLog("⌨️ 最终: hasFocus=${target.hasFocus()} IME.active=$active")
-                }
-            }, delay)
-        }
     }
 
     override fun onPause() {
@@ -112,7 +91,7 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
     override fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?, rawKeyCode: Int) {
         runOnUiThread {
             val device = deviceName ?: source
-            appendLog("♿ 无障碍服务 -> keyCode=$rawKeyCode key=${event.buttonName}/${event.buttonId} pressed=${event.isPressed} src=$source dev=$device")
+            appendLog("♿ 捕获: keyCode=$rawKeyCode key=${event.buttonName}/${event.buttonId} pressed=${event.isPressed} src=$source dev=$device")
             if (event.isPressed) {
                 lastButton = event
                 tvDetected.text = "已捕获：${event.buttonName} (${event.buttonId})\n原始keyCode=$rawKeyCode\n设备: $device\n来源: 无障碍服务"
@@ -124,7 +103,7 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
     override fun onMotionCaptured(button: String, source: String, deviceName: String?) {
         runOnUiThread {
             val device = deviceName ?: source
-            appendLog("🎮 onMotionCaptured: button=$button src=$source dev=$device")
+            appendLog("🎮 摇杆事件: button=$button src=$source dev=$device")
         }
     }
 
@@ -133,7 +112,7 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
         if (event.repeatCount > 0) return super.dispatchKeyEvent(event)
 
         val source = KeyMapperAccessibilityService.sourceToString(event.source)
-        appendLog("📱 dispatchKeyEvent: keyCode=${event.keyCode} action=${event.action} src=$source")
+        appendLog("📱 Activity直接收到按键: keyCode=${event.keyCode} action=${event.action} src=$source")
 
         if (event.action == KeyEvent.ACTION_DOWN) {
             val btn = KeyMapperAccessibilityService.keyEventToButton(event)
@@ -184,14 +163,14 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
             tvA11yState.text = "♿ 无障碍服务: 运行中 ✅ (已捕获 $a11yKeyCount 个按键)"
             tvA11yState.setTextColor(Color.parseColor("#FF2E7D32"))
         } else {
-            tvA11yState.text = "⚠️ 无障碍服务未运行 — 按键可能无法捕获！"
+            tvA11yState.text = "⚠️ 无障碍服务未运行！请到系统设置 → 无障碍中开启本应用的服务"
             tvA11yState.setTextColor(Color.parseColor("#FFC62828"))
         }
     }
 
     private fun appendLog(line: String) {
         logLines.add(line)
-        if (logLines.size > 150) logLines.removeAt(0)
+        if (logLines.size > 200) logLines.removeAt(0)
         tvLog?.text = logLines.joinToString("\n")
         Log.d("ButtonPicker", line)
     }
@@ -210,23 +189,6 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#FFF5F5F5"))
         }
-
-        imeFocusTarget = android.widget.EditText(this).apply {
-            visibility = View.VISIBLE
-            isFocusable = true
-            isFocusableInTouchMode = true
-            setBackgroundColor(android.graphics.Color.WHITE)
-            textSize = 12f
-            setSingleLine()
-            inputType = android.text.InputType.TYPE_CLASS_TEXT
-            hint = ""
-        }
-        root.addView(imeFocusTarget, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-        ).apply {
-            marginStart = -dp(10000)
-            width = dp(10)
-        })
 
         val toolbar = Toolbar(this).apply {
             setBackgroundColor(Color.parseColor("#FF3F51B5"))
@@ -251,7 +213,7 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
         }
         content.addView(tvA11yState)
 
-        val tvStatus = TextView(this).apply {
+        tvStatus = TextView(this).apply {
             text = "按下手柄任意按键…"
             textSize = 16f
             setTextColor(Color.parseColor("#FF212121"))

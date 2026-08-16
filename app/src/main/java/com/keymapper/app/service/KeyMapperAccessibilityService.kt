@@ -1,14 +1,15 @@
 package com.keymapper.app.service
 
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.accessibilityservice.InputMethod
 import android.content.Context
 import android.graphics.Path
 import android.os.Build
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import com.keymapper.app.AppContainer
@@ -24,7 +25,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
     }
 
     companion object {
-        private const val TAG = "AccessibilityService"
+        private const val TAG = "K2ER-Service"
         @Volatile
         var instance: KeyMapperAccessibilityService? = null
             private set
@@ -35,13 +36,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         private var a11yKeyCount: Int = 0
         fun getA11yKeyCount(): Int = a11yKeyCount
 
-        @Volatile
-        private var a11yMotionCount: Int = 0
-        fun getA11yMotionCount(): Int = a11yMotionCount
-
         private val keyListeners = mutableListOf<KeyListener>()
-
-        fun getKeyListeners(): MutableList<KeyListener> = keyListeners
 
         fun addKeyListener(listener: KeyListener) {
             synchronized(keyListeners) {
@@ -53,43 +48,6 @@ class KeyMapperAccessibilityService : AccessibilityService() {
             synchronized(keyListeners) {
                 keyListeners.remove(listener)
             }
-        }
-
-        fun enumerateInputDevices(): String {
-            val sb = StringBuilder()
-            sb.append("===== Input Devices =====\n")
-            try {
-                val ids = InputDevice.getDeviceIds()
-                for (id in ids) {
-                    val dev = InputDevice.getDevice(id) ?: continue
-                    val name = dev.name
-                    val sources = dev.sources
-                    val desc = deviceTypeDesc(sources)
-                    sb.append("  [$id] $name | sources=$sources ($desc)\n")
-                    val motionRanges = dev.motionRanges
-                    if (motionRanges != null && motionRanges.isNotEmpty()) {
-                        for (mr in motionRanges) {
-                            sb.append("    axis ${mr.axis} min=${"%.2f".format(mr.min)} max=${"%.2f".format(mr.max)}\n")
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                sb.append("Error: ${e.message}\n")
-            }
-            return sb.toString()
-        }
-
-        private fun deviceTypeDesc(sources: Int): String {
-            val parts = mutableListOf<String>()
-            if (sources and InputDevice.SOURCE_TOUCHSCREEN != 0) parts.add("TOUCH")
-            if (sources and InputDevice.SOURCE_KEYBOARD != 0) parts.add("KEYBOARD")
-            if (sources and InputDevice.SOURCE_GAMEPAD != 0) parts.add("GAMEPAD")
-            if (sources and InputDevice.SOURCE_JOYSTICK != 0) parts.add("JOYSTICK")
-            if (sources and InputDevice.SOURCE_DPAD != 0) parts.add("DPAD")
-            if (sources and InputDevice.SOURCE_MOUSE != 0) parts.add("MOUSE")
-            if (sources and InputDevice.SOURCE_TOUCHPAD != 0) parts.add("TOUCHPAD")
-            if (sources and InputDevice.SOURCE_TRACKBALL != 0) parts.add("TRACKBALL")
-            return parts.joinToString("|").ifBlank { "NONE($sources)" }
         }
 
         private val KEYCODE_TO_BUTTON = mapOf(
@@ -132,39 +90,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     private var screenWidth: Int = 0
     private var screenHeight: Int = 0
-    private var eventCount: Int = 0
-
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (eventCount++ % 1000 == 0) {
-            Log.d(TAG, "onAccessibilityEvent count=$eventCount")
-        }
-    }
-
-    override fun onInterrupt() {}
-
-    override fun onKeyEvent(event: KeyEvent?): Boolean {
-        if (event == null) return false
-        if (event.repeatCount > 0) return false
-
-        a11yKeyCount++
-        val btn = keyEventToButton(event)
-        val source = sourceToString(event.source)
-        val deviceName = try { event.device?.name } catch (_: Exception) { null }
-
-        runCatching { AppContainer.require() }
-            .getOrNull()
-            ?.bluetoothController
-            ?.dispatchAccessibilityKey(btn)
-
-        synchronized(keyListeners) {
-            for (l in keyListeners.toList()) {
-                runCatching { l.onKeyCaptured(btn, source, deviceName, event.keyCode) }
-            }
-        }
-
-        Log.i(TAG, "🔑 KEY#$a11yKeyCount: keyCode=${event.keyCode} act=${event.action} src=$source dev=$deviceName -> ${btn.buttonName}/${btn.buttonId}")
-        return false
-    }
+    private var imeBridge: InputMethod? = null
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -181,32 +107,65 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         screenWidth = metrics.width()
         screenHeight = metrics.height()
 
-        Log.i(TAG, "✅ AccessibilityService connected ${screenWidth}x${screenHeight}, SDK=${Build.VERSION.SDK_INT}")
+        val flags = serviceInfo.flags
+        val hasFlagFilterKey = flags and AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS != 0
+        val hasFlagImeEditor = flags and 0x00010000 != 0
+        Log.i(TAG, "✅ K2ER Service connected ${screenWidth}x${screenHeight}, SDK=${Build.VERSION.SDK_INT}")
+        Log.i(TAG, "📋 flags=0x${flags.toString(16)} filterKey=$hasFlagFilterKey imeEditor=$hasFlagImeEditor")
+    }
 
-        try {
-            val info = serviceInfo
-            val oldFlags = info.flags
-            val FLAG_REQUEST_FILTER_KEY_EVENTS = try {
-                android.accessibilityservice.AccessibilityServiceInfo::class.java.getField("FLAG_REQUEST_FILTER_KEY_EVENTS").getInt(null)
-            } catch (_: Exception) { 0x00000200 }
-            val FLAG_SEND_MOTION_EVENTS = try {
-                android.accessibilityservice.AccessibilityServiceInfo::class.java.getField("FLAG_SEND_MOTION_EVENTS").getInt(null)
-            } catch (_: Exception) { 0x00000400 }
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
 
-            info.flags = oldFlags or FLAG_REQUEST_FILTER_KEY_EVENTS or FLAG_SEND_MOTION_EVENTS
-            val result = setServiceInfo(info)
-            Log.i(TAG, "🔧 setServiceInfo old=0x${oldFlags.toString(16)} new=0x${info.flags.toString(16)} reqFilterKey=$FLAG_REQUEST_FILTER_KEY_EVENTS reqMotion=$FLAG_SEND_MOTION_EVENTS result=$result")
-        } catch (e: Exception) {
-            Log.e(TAG, "setServiceInfo failed: ${e.message}", e)
+    override fun onInterrupt() {}
+
+    /**
+     * K2ER 核心机制：Android 13+ 通过 flagInputMethodEditor 让 AccessibilityService 内部
+     * 持有一个 InputMethod 通道，从而可以在不切换输入法的情况下接收按键事件。
+     * 必须调用 super.onCreateInputMethod() 让系统正确初始化，绝不能用反射自己构造！
+     */
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.TIRAMISU)
+    override fun onCreateInputMethod(): InputMethod {
+        val result = super.onCreateInputMethod()
+        imeBridge = result
+        Log.i(TAG, "✅ onCreateInputMethod 通过 super() 成功")
+        return result
+    }
+
+    /**
+     * K2ER 按键拦截入口。只要 XML 配置了 flagRequestFilterKeyEvents，
+     * 且 onCreateInputMethod 正确返回了非 null 实例，系统就会把所有按键事件
+     * 通过这里回调给我们 —— 不需要 Activity 有焦点，也不需要切输入法。
+     *
+     * 返回 false = 不消费事件，让手柄按键继续透传到游戏/系统。
+     */
+    override fun onKeyEvent(event: KeyEvent?): Boolean {
+        if (event == null) return false
+        if (event.repeatCount > 0) return false
+
+        a11yKeyCount++
+        val btn = keyEventToButton(event)
+        val source = sourceToString(event.source)
+        val deviceName = try { event.device?.name } catch (_: Exception) { null }
+
+        runCatching { AppContainer.require() }.getOrNull()?.let {
+            runCatching { it.bluetoothController.dispatchAccessibilityKey(btn) }
         }
 
-        val curFlags = serviceInfo.flags
-        Log.i(TAG, "📋 Current flags=0x${curFlags.toString(16)} a11yKeyCount=$a11yKeyCount a11yMotionCount=$a11yMotionCount")
-        Log.i(TAG, enumerateInputDevices())
+        synchronized(keyListeners) {
+            for (l in keyListeners.toList()) {
+                runCatching { l.onKeyCaptured(btn, source, deviceName, event.keyCode) }
+            }
+        }
+
+        if (a11yKeyCount <= 5 || event.action == KeyEvent.ACTION_DOWN) {
+            Log.i(TAG, "🔑 KEY#$a11yKeyCount: kc=${event.keyCode} act=${event.action} src=$source dev=$deviceName -> ${btn.buttonName}/${btn.buttonId}")
+        }
+        return false
     }
 
     override fun onDestroy() {
         instance = null
+        imeBridge = null
         super.onDestroy()
     }
 
@@ -216,7 +175,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0L, 80L))
             .build()
-        return dispatchGesture(gesture, null, null).also { Log.d(TAG, "tap -> $it") }
+        return dispatchGesture(gesture, null, null).also { Log.d(TAG, "tap($normX,$normY) -> $it") }
     }
 
     fun performLongPress(normX: Float, normY: Float, durationMs: Long): Boolean {

@@ -44,8 +44,6 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
 
     private var PERMISSION_REQUEST_CODE = 100
     private val debugLog = StringBuilder()
-    private var motionCount = 0
-    private var motionAxisCount = 0
     private var keyCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -92,9 +90,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
 
     override fun onMotionCaptured(button: String, source: String, deviceName: String?) {
         runOnUiThread {
-            motionAxisCount++
-            val device = deviceName ?: source
-            appendDebug("[A11yMOTION#$motionAxisCount] btn=$button src=$source dev=$device")
+            appendDebug("[A11yMOTION] btn=$button src=$source dev=$deviceName")
         }
     }
 
@@ -117,8 +113,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             } catch (_: Exception) {}
         }
         if (axes.isNotEmpty() || ev.action != MotionEvent.ACTION_MOVE) {
-            motionAxisCount++
-            appendDebug("[MOTION#$motionAxisCount] $act source=${ev.source} ${axes.joinToString(" ")}")
+            appendDebug("[MOTION] $act source=${ev.source} ${axes.joinToString(" ")}")
         }
         return super.onGenericMotionEvent(ev)
     }
@@ -131,22 +126,8 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         val action = if (event.action == KeyEvent.ACTION_DOWN) "DOWN" else "UP  "
         val source = KeyMapperAccessibilityService.sourceToString(event.source)
         val mapping = btn?.let { "-> ${it.buttonName}/${it.buttonId}" } ?: ""
-        appendDebug("[KEY#$keyCount] $action keyCode=${event.keyCode} src=$source flags=${event.flags} $mapping")
+        appendDebug("[KEY#$keyCount] $action keyCode=${event.keyCode} src=$source $mapping")
         return super.dispatchKeyEvent(event)
-    }
-
-    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
-        ev ?: return super.dispatchTouchEvent(null)
-        if (ev.action == MotionEvent.ACTION_MOVE) return super.dispatchTouchEvent(ev)
-        motionCount++
-        val act = when (ev.action) {
-            MotionEvent.ACTION_DOWN -> "DOWN"
-            MotionEvent.ACTION_UP -> "UP"
-            MotionEvent.ACTION_CANCEL -> "CANCEL"
-            else -> "OTHER(${ev.action})"
-        }
-        appendDebug("[TOUCH#$motionCount] $act x=${ev.x.toInt()},y=${ev.y.toInt()} source=${ev.source} pointerCount=${ev.pointerCount}")
-        return super.dispatchTouchEvent(ev)
     }
 
     private fun appendDebug(line: String) {
@@ -157,8 +138,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             try {
                 tvDebugLog.text = log
                 val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
-                val a11yMotion = KeyMapperAccessibilityService.getA11yMotionCount()
-                tvDebugTitle.text = "🔍 诊断面板 (SDK=${Build.VERSION.SDK_INT}) [A11yKEY=$a11yKey A11yMOTION=$a11yMotion ACT_KEY=$keyCount ACT_MOTION=$motionAxisCount]"
+                tvDebugTitle.text = "🔍 诊断面板 (SDK=${Build.VERSION.SDK_INT}) [A11yKEY=$a11yKey ACT_KEY=$keyCount]"
             } catch (_: Exception) {}
         }
         Log.i(TAG, line)
@@ -168,37 +148,10 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         val a11yRunning = KeyMapperAccessibilityService.isRunning()
         val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
         val info = "📱 Android SDK: ${Build.VERSION.SDK_INT}\n" +
-                   "♿ 无障碍服务: ${if (a11yRunning) "运行中 ✅" else "未运行 ❌"} (已捕获按键: $a11yCount)\n"
+                   "♿ 无障碍服务: ${if (a11yRunning) "运行中 ✅" else "未运行 ❌"} (已捕获按键: $a11yCount)\n" +
+                   "🎮 按键捕获: 通过 K2ER 模式 (AccessibilityService + flagInputMethodEditor)\n"
         appendDebug("=== 诊断 ===")
         appendDebug(info)
-    }
-
-    private fun dumpDevices() {
-        val info = KeyMapperAccessibilityService.enumerateInputDevices()
-        appendDebug(info)
-        Toast.makeText(this, "已刷新输入设备列表，看调试面板", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun dumpLogcat() {
-        Thread {
-            try {
-                val proc = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-s", "AccessibilityService:I", "MainActivity:I", "*:S"))
-                val output = proc.inputStream.bufferedReader().use { it.readText() }
-                runOnUiThread {
-                    appendDebug("========== LOGCAT 抓取 ==========")
-                    val lines = output.lines().takeLast(60)
-                    for (line in lines) appendDebug(line)
-                    if (lines.isEmpty()) appendDebug("（无输出 —— 可能缺少 READ_LOGS 权限）")
-                    appendDebug("====== 抓取结束 ======")
-                    Toast.makeText(this@MainActivity, "日志已抓取 ${lines.size} 行", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    appendDebug("❌ logcat 抓取失败: ${e.message}")
-                    Toast.makeText(this@MainActivity, "失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }.start()
     }
 
     private fun startEventCollectors() {
@@ -228,7 +181,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
                         val dev = container.bluetoothController.connectedDevice.value
                         when (state) {
                             ConnectionState.CONNECTED -> {
-                                tvDevicesStatus.text = "✅ 已选中并连接：${dev?.name ?: "?"}"
+                                tvDevicesStatus.text = "✅ 已选中手柄：${dev?.name ?: "?"}"
                                 tvDevicesStatus.setTextColor(Color.parseColor("#FF4CAF50"))
                             }
                             ConnectionState.CONNECTING -> {
@@ -236,7 +189,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
                                 tvDevicesStatus.setTextColor(Color.parseColor("#FFFF9800"))
                             }
                             ConnectionState.DISCONNECTED -> {
-                                tvDevicesStatus.text = "未选中设备"
+                                tvDevicesStatus.text = "未选中手柄"
                                 tvDevicesStatus.setTextColor(Color.parseColor("#FF9E9E9E"))
                             }
                         }
@@ -320,7 +273,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         val toolbar = Toolbar(this).apply {
             setBackgroundColor(Color.parseColor("#FF3F51B5"))
             setTitleTextColor(Color.WHITE)
-            title = "KeyMapper"
+            title = "K2ER 手柄映射"
         }
         root.addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
         setSupportActionBar(toolbar)
@@ -344,90 +297,29 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             }
         }
 
-        val refreshStatusBar = Runnable {
-            val running = KeyMapperAccessibilityService.isRunning()
-            val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
-            val a11yMotion = KeyMapperAccessibilityService.getA11yMotionCount()
-            val imeKey = com.keymapper.app.inputmethod.KeyMapperImeService.getImeKeyCount()
-            val isImeEnabled = isKeyMapperImeEnabled()
-            val isImeActive = isKeyMapperImeActive()
-            if (running) {
-                statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
-                tvA11yStatus.text = "✅ 无障碍已开 | ⌨️IME=$imeKey ${if (isImeActive) "✅激活中" else if (isImeEnabled) "已启用但未选中" else "❌未启用"} | A11y=$a11yKey"
-                tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
-                btnGoA11y.visibility = View.GONE
-            } else {
-                statusBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
-                tvA11yStatus.text = "⚠️ 无障碍未开！这是模拟点击的关键"
-                tvA11yStatus.setTextColor(Color.parseColor("#FFC62828"))
-                btnGoA11y.visibility = View.VISIBLE
-            }
-        }
-
-        val imeBar = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setGravity(android.view.Gravity.CENTER_VERTICAL)
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            setBackgroundColor(Color.parseColor("#FFF3E5F5"))
-        }
-        val tvImeStatus = TextView(this).apply {
-            textSize = 12f
-            setTextColor(Color.parseColor("#FF6A1B9A"))
-        }
-        val btnImeSettings = AppCompatButton(this).apply {
-            text = "去设置"
-            textSize = 11f
-            setOnClickListener {
-                try { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-                catch (_: Exception) { Toast.makeText(this@MainActivity, "手动打开系统设置 → 系统 → 语言和输入法", Toast.LENGTH_LONG).show() }
-            }
-        }
-        imeBar.addView(tvImeStatus, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        imeBar.addView(btnImeSettings)
-        root.addView(imeBar)
-
-        root.addView(statusBar)
-        root.post(object : Runnable {
+        val refreshStatusBar = object : Runnable {
             override fun run() {
-                refreshStatusBar.run()
-                val imeEnabled = isKeyMapperImeEnabled()
-                val imeActive = isKeyMapperImeActive()
-                val imeKey2 = com.keymapper.app.inputmethod.KeyMapperImeService.getImeKeyCount()
-                if (imeActive) {
-                    imeBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
-                    tvImeStatus.text = "✅ KeyMapper 输入法已激活（捕获按键: $imeKey2）"
-                    tvImeStatus.setTextColor(Color.parseColor("#FF2E7D32"))
-                    btnImeSettings.text = "切换输入法"
-                } else if (imeEnabled) {
-                    imeBar.setBackgroundColor(Color.parseColor("#FFFDE7"))
-                    tvImeStatus.text = "⚠️ KeyMapper 输入法已启用但未选中（点切换输入法后选 KeyMapper）"
-                    tvImeStatus.setTextColor(Color.parseColor("#F57F17"))
-                    btnImeSettings.text = "切换输入法"
+                val running = KeyMapperAccessibilityService.isRunning()
+                val a11yKey = KeyMapperAccessibilityService.getA11yKeyCount()
+                if (running) {
+                    statusBar.setBackgroundColor(Color.parseColor("#FFF1F8E9"))
+                    tvA11yStatus.text = "✅ 无障碍服务已开启 | 按键捕获: $a11yKey"
+                    tvA11yStatus.setTextColor(Color.parseColor("#FF2E7D32"))
+                    btnGoA11y.visibility = View.GONE
                 } else {
-                    imeBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
-                    tvImeStatus.text = "❌ KeyMapper 输入法未启用 — 手柄按键可能捕获不到！点『去设置』→ 启用 KeyMapper"
-                    tvImeStatus.setTextColor(Color.parseColor("#FFC62828"))
-                    btnImeSettings.text = "去设置"
+                    statusBar.setBackgroundColor(Color.parseColor("#FFFFEBEE"))
+                    tvA11yStatus.text = "⚠️ 请先开启无障碍服务（这是按键捕获的关键）"
+                    tvA11yStatus.setTextColor(Color.parseColor("#FFC62828"))
+                    btnGoA11y.visibility = View.VISIBLE
                 }
-                if (btnImeSettings.text == "切换输入法") {
-                    btnImeSettings.setOnClickListener {
-                        try {
-                            val im = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-                            im.showInputMethodPicker()
-                        } catch (_: Exception) {
-                            try { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-                            catch (_: Exception) {}
-                        }
-                    }
-                } else {
-                    btnImeSettings.setOnClickListener {
-                        try { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
-                        catch (_: Exception) {}
-                    }
-                }
-                root.postDelayed(this, 1500)
+                root.postDelayed(this, 2000)
             }
-        })
+        }
+        refreshStatusBar.run()
+
+        statusBar.addView(tvA11yStatus, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        statusBar.addView(btnGoA11y)
+        root.addView(statusBar)
 
         val scrollView = ScrollView(this).apply { isFillViewport = true }
         val content = LinearLayout(this).apply {
@@ -435,48 +327,16 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             setPadding(dp(12), dp(12), dp(12), dp(12))
         }
 
-        val diagTitle = TextView(this).apply {
-            text = "🔧 诊断：SDK ${Build.VERSION.SDK_INT}"
-            textSize = 13f
-            setTextColor(Color.parseColor("#FF1565C0"))
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        content.addView(diagTitle)
-
-        val deviceBtnRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-        }
-        val btnDumpDev = AppCompatButton(this).apply {
-            text = "🔌 列出输入设备"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            setOnClickListener { dumpDevices() }
-        }
-        val btnRefreshDiag = AppCompatButton(this).apply {
-            text = "🔄 刷新诊断"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
-            setOnClickListener { refreshDiagnosticPanel() }
-        }
-        val btnDumpLog = AppCompatButton(this).apply {
-            text = "📋 抓取日志"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
-            setOnClickListener { dumpLogcat() }
-        }
-        deviceBtnRow.addView(btnDumpDev)
-        deviceBtnRow.addView(btnRefreshDiag)
-        deviceBtnRow.addView(btnDumpLog)
-        content.addView(deviceBtnRow)
-
-        val devicesTitle = TextView(this).apply {
-            text = "已配对的蓝牙设备（点『选中』指定）"
+        content.addView(TextView(this).apply {
+            text = "已配对的蓝牙手柄（点『选中』指定）"
             textSize = 16f
             setTextColor(Color.parseColor("#FF212121"))
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             setPadding(0, dp(12), 0, dp(4))
-        }
-        content.addView(devicesTitle)
+        })
 
         tvDevicesStatus = TextView(this).apply {
-            text = "未选中设备"
+            text = "未选中手柄"
             textSize = 13f
             setTextColor(Color.parseColor("#FF9E9E9E"))
             setPadding(0, dp(2), 0, dp(6))
@@ -501,7 +361,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         content.addView(addBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         tvDebugTitle = TextView(this).apply {
-            text = "🔍 诊断面板（加载中...）"
+            text = "🔍 诊断面板"
             textSize = 14f
             setTextColor(Color.parseColor("#FFD32F2F"))
             setTypeface(typeface, android.graphics.Typeface.BOLD)
@@ -510,7 +370,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         content.addView(tvDebugTitle)
 
         tvDebugLog = TextView(this).apply {
-            text = "加载中... 点上面的『列出输入设备』和『刷新诊断』按钮\n然后按手柄按键看这里有什么变化\n"
+            text = "按手柄按键，看这里有没有事件输出...\n"
             textSize = 11f
             setTextColor(Color.parseColor("#FF212121"))
             setBackgroundColor(Color.WHITE)
@@ -523,7 +383,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
             setOnClickListener {
                 debugLog.clear()
                 tvDebugLog.text = ""
-                keyCount = 0; motionCount = 0; motionAxisCount = 0
+                keyCount = 0
             }
         }
         content.addView(clearDebugBtn)
@@ -534,22 +394,6 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun isKeyMapperImeEnabled(): Boolean {
-        return try {
-            val im = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            val enabled = im.enabledInputMethodList
-            enabled.any { it.packageName == packageName }
-        } catch (_: Exception) { false }
-    }
-
-    private fun isKeyMapperImeActive(): Boolean {
-        return try {
-            val im = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            val active = im.currentInputMethodInfo
-            active?.packageName == packageName
-        } catch (_: Exception) { false }
-    }
 
     companion object { private const val TAG = "MainActivity" }
 }

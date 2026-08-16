@@ -8,22 +8,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import com.keymapper.app.model.DeviceInfo
 import com.keymapper.app.model.HidButtonEvent
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.withContext
-import java.io.InputStream
-import java.io.OutputStream
-import java.util.UUID
 
 enum class ConnectionState { DISCONNECTED, CONNECTING, CONNECTED }
 
@@ -42,18 +39,11 @@ class BluetoothHidController(private val context: Context) {
     private val _connectedDevice = MutableStateFlow<DeviceInfo?>(null)
     val connectedDevice: StateFlow<DeviceInfo?> = _connectedDevice.asStateFlow()
 
-    private val _buttonEvents = MutableSharedFlow<HidButtonEvent>(extraBufferCapacity = 256)
+    private val _buttonEvents = MutableSharedFlow<HidButtonEvent>(extraBufferCapacity = 512)
     val buttonEvents = _buttonEvents.asSharedFlow()
-
-    private var inputStream: InputStream? = null
-    private var outputStream: OutputStream? = null
-    private var listenerThread: Thread? = null
-    @Volatile private var running = false
 
     private var selectedAddress: String? = null
     private val prefs by lazy { context.getSharedPreferences("keymapper", Context.MODE_PRIVATE) }
-
-    private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
     private val aclReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
@@ -61,12 +51,14 @@ class BluetoothHidController(private val context: Context) {
             val addr = device.address ?: return
             when (intent.action) {
                 BluetoothDevice.ACTION_ACL_CONNECTED -> {
-                    if (selectedAddress != null && selectedAddress == addr) {
-                        _connectedDevice.value = DeviceInfo(device.name, addr)
+                    Log.i(TAG, "📡 ACL_CONNECTED: ${device.name} ($addr) selected=$selectedAddress")
+                    if (selectedAddress == addr) {
+                        _connectedDevice.value = DeviceInfo(device.name ?: "未知手柄", addr)
                         _connectionState.value = ConnectionState.CONNECTED
                     }
                 }
                 BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                    Log.i(TAG, "📡 ACL_DISCONNECTED: ${device.name} ($addr)")
                     if (selectedAddress == addr) {
                         _connectedDevice.value = null
                         _connectionState.value = ConnectionState.DISCONNECTED
@@ -74,6 +66,7 @@ class BluetoothHidController(private val context: Context) {
                 }
                 BluetoothAdapter.ACTION_STATE_CHANGED -> {
                     if (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1) == BluetoothAdapter.STATE_OFF) {
+                        Log.i(TAG, "📡 Bluetooth turned off")
                         _connectedDevice.value = null
                         _connectionState.value = ConnectionState.DISCONNECTED
                     }
@@ -93,27 +86,46 @@ class BluetoothHidController(private val context: Context) {
         } else {
             context.registerReceiver(aclReceiver, filter)
         }
+
         selectedAddress = prefs.getString("selected_address", null)
         if (selectedAddress != null) {
             val adapter = bluetoothAdapter
             val name = try { adapter?.getRemoteDevice(selectedAddress)?.name ?: "未知手柄" } catch (e: Exception) { "未知手柄" }
-            _connectedDevice.value = DeviceInfo(name, selectedAddress!!)
+            val info = DeviceInfo(name, selectedAddress!!)
+            _connectedDevice.value = info
             _connectionState.value = ConnectionState.CONNECTED
             Log.i(TAG, "🔄 恢复已选手柄: $name (${selectedAddress})")
+
+            Handler(Looper.getMainLooper()).postDelayed({
+                verifyAclConnection()
+            }, 500)
+        }
+    }
+
+    private fun verifyAclConnection() {
+        val addr = selectedAddress ?: return
+        val adapter = bluetoothAdapter ?: return
+        try {
+            val all = adapter.bondedDevices ?: emptySet()
+            val target = all.firstOrNull { it.address == addr }
+            if (target == null) {
+                Log.w(TAG, "⚠️ 已选设备 $addr 不在已配对列表中，可能已被取消配对")
+                return
+            }
+            Log.i(TAG, "🔍 verifyAcl: 设备在已配对列表中，蓝牙开关=${adapter.isEnabled}")
+        } catch (e: Exception) {
+            Log.e(TAG, "verifyAclConnection error: ${e.message}")
         }
     }
 
     fun release() {
         try { context.unregisterReceiver(aclReceiver) } catch (_: Exception) {}
-        disconnect()
     }
 
-    /** 无障碍服务捕获到的按键事件 -> 转发给监听者。 */
     fun dispatchAccessibilityKey(event: HidButtonEvent) {
         _buttonEvents.tryEmit(event)
     }
 
-    /** 用户选中一个设备。完全不做任何阻塞调用，防止 ANR。 */
     fun selectDevice(address: String) {
         selectedAddress = address
         prefs.edit().putString("selected_address", address).apply()
@@ -128,74 +140,23 @@ class BluetoothHidController(private val context: Context) {
     fun unselectDevice() {
         selectedAddress = null
         prefs.edit().remove("selected_address").apply()
-        stopListener()
         _connectionState.value = ConnectionState.DISCONNECTED
         _connectedDevice.value = null
         Log.i(TAG, "❌ 已取消选中并清除保存")
     }
 
-    private suspend fun tryConnectSpp(device: BluetoothDevice) = withContext(Dispatchers.IO) {
-        try {
-            val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
-            bluetoothAdapter?.cancelDiscovery()
-            socket.connect() // 这里会阻塞几秒，但我们在 IO 线程
-            inputStream = socket.inputStream
-            outputStream = socket.outputStream
-            startListener()
-            Log.i(TAG, "SPP 数据通道已建立")
-        } catch (e: Exception) {
-            Log.d(TAG, "SPP 不可用: ${device.name}")
+    suspend fun getCurrentlyConnectedDevices(): List<DeviceInfo> {
+        val adapter = bluetoothAdapter ?: return emptyList()
+        val bonded = adapter.bondedDevices ?: emptySet()
+        return bonded.map { dev ->
+            DeviceInfo(dev.name ?: "未知设备", dev.address)
         }
-    }
-
-    suspend fun getCurrentlyConnectedDevices(): List<DeviceInfo> = withContext(Dispatchers.IO) {
-        val adapter = bluetoothAdapter
-        if (adapter == null) return@withContext emptyList()
-        adapter.bondedDevices?.map { DeviceInfo(it.name, it.address) } ?: emptyList()
     }
 
     fun connect(deviceAddress: String): Boolean { selectDevice(deviceAddress); return true }
     fun disconnect() { unselectDevice() }
 
-    private fun startListener() {
-        running = true
-        listenerThread = Thread {
-            val buffer = ByteArray(1024)
-            while (running) {
-                try {
-                    val n = inputStream?.read(buffer) ?: break
-                    if (n > 0) parseReportBytes(buffer.copyOf(n))
-                } catch (e: Exception) { break }
-            }
-        }.also { it.isDaemon = true; it.name = "HID-Listener"; it.start() }
-    }
-
-    private fun stopListener() {
-        running = false
-        try { inputStream?.close() } catch (_: Exception) {}
-        try { outputStream?.close() } catch (_: Exception) {}
-        inputStream = null; outputStream = null
-        listenerThread?.interrupt(); listenerThread = null
-    }
-
-    private fun parseReportBytes(data: ByteArray) {
-        if (data.isEmpty()) return
-        val buttonByte = data[0].toInt() and 0xFF
-        for ((bit, name) in BUTTON_MAP) {
-            val pressed = (buttonByte and (1 shl (bit - 1))) != 0
-            _buttonEvents.tryEmit(HidButtonEvent(
-                buttonId = "BTN_$bit", buttonName = name, isPressed = pressed
-            ))
-        }
-    }
-
     companion object {
         private const val TAG = "BluetoothHid"
-        val BUTTON_MAP = mapOf(
-            0x01 to "A", 0x02 to "B", 0x03 to "X", 0x04 to "Y",
-            0x05 to "L1", 0x06 to "R1", 0x07 to "L2", 0x08 to "R2",
-            0x09 to "SELECT", 0x0A to "START",
-            0x0B to "L3", 0x0C to "R3", 0x0D to "HOME",
-        )
     }
 }
