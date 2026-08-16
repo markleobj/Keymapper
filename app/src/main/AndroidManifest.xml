@@ -2,27 +2,19 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- 蓝牙权限 -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-
-    <!-- 定位权限（Android 12 以下蓝牙扫描需要） -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-    <!-- 前台服务权限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-
-    <!-- 查询所有包名 -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
     <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
 
-    <!-- 关键: 不声明 android:name，系统 Application 零代码 -->
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -40,27 +32,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".ui.MappingConfigActivity"
-            android:exported="false" />
-
-        <activity
-            android:name=".ui.ButtonPickerActivity"
-            android:exported="false" />
-
-        <service
-            android:name=".service.KeyMapperAccessibilityService"
-            android:exported="false"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
-
     </application>
-
 </manifest>
