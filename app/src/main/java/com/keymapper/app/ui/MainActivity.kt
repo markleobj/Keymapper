@@ -66,8 +66,32 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
                 requestPermissions()
                 withContext(Dispatchers.Main) {
                     setupDeviceTab()
-                    refreshAll()
                 }
+
+                // ---- 监听 Repository Flow 自动更新（必须在 app 赋值之后！）----
+                launch {
+                    app!!.mappingRepository.mappings.collect { list ->
+                        withContext(Dispatchers.Main) {
+                            Log.i(TAG, "mappings flow update: ${list.size} items")
+                            mappingAdapter.submitList(list)
+                            tvMappingCount.text = "  本方案共 ${list.size} 条映射"
+                            tvEmptyHint.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+                        }
+                    }
+                }
+
+                launch {
+                    try {
+                        app!!.mappingRepository.currentProfileFlow.collect {
+                            Log.i(TAG, "profile changed to: $it")
+                            refreshAll()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "profiles flow collect failed", e)
+                    }
+                }
+
+                refreshAll()
                 startEventCollectors()
                 refreshDeviceList()
             } catch (e: Throwable) {
@@ -91,6 +115,7 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
         super.onResume()
         KeyMapperAccessibilityService.addKeyListener(this)
         refreshDiagnosticPanel()
+        refreshAll()
         handler.post(refreshRunnable)
     }
 
@@ -621,27 +646,6 @@ class MainActivity : AppCompatActivity(), KeyMapperAccessibilityService.KeyListe
                     Log.e(TAG, "del profile failed", e)
                     withContext(Dispatchers.Main) { Toast.makeText(this@MainActivity, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show() }
                 }
-            }
-        }
-
-        // 监听 Repository Flow 自动更新列表
-        lifecycleScope.launch(Dispatchers.Default) {
-            app?.mappingRepository?.mappings?.collect { list ->
-                withContext(Dispatchers.Main) {
-                    mappingAdapter.submitList(list)
-                    tvMappingCount.text = "  本方案共 ${list.size} 条映射"
-                    tvEmptyHint.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
-                }
-            }
-        }
-
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                app?.mappingRepository?.listProfilesFlow()?.collect {
-                    refreshAll()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "profiles flow collect failed", e)
             }
         }
 
