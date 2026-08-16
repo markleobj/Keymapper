@@ -9,7 +9,6 @@ import android.util.DisplayMetrics
 import android.util.Log
 import android.view.InputDevice
 import android.view.KeyEvent
-import android.view.MotionEvent
 import android.view.accessibility.AccessibilityEvent
 import android.view.WindowManager
 import com.keymapper.app.AppContainer
@@ -19,12 +18,35 @@ import kotlin.math.min
 
 class KeyMapperAccessibilityService : AccessibilityService() {
 
+    interface KeyListener {
+        fun onKeyCaptured(event: HidButtonEvent, source: String, deviceName: String?)
+    }
+
     companion object {
         private const val TAG = "AccessibilityService"
+        @Volatile
         var instance: KeyMapperAccessibilityService? = null
             private set
 
         fun isRunning(): Boolean = instance != null
+
+        @Volatile
+        private var lastKeyTime: Long = 0
+        fun getLastKeyTime(): Long = lastKeyTime
+
+        private val keyListeners = mutableListOf<KeyListener>()
+
+        fun addKeyListener(listener: KeyListener) {
+            synchronized(keyListeners) {
+                if (!keyListeners.contains(listener)) keyListeners.add(listener)
+            }
+        }
+
+        fun removeKeyListener(listener: KeyListener) {
+            synchronized(keyListeners) {
+                keyListeners.remove(listener)
+            }
+        }
 
         private val KEYCODE_TO_BUTTON = mapOf(
             KeyEvent.KEYCODE_BUTTON_A      to Pair("BTN_A",      "A"),
@@ -73,6 +95,16 @@ class KeyMapperAccessibilityService : AccessibilityService() {
                 ?: return HidButtonEvent("RAW_$keyCode", "键#$keyCode", true)
             return HidButtonEvent(pair.first, pair.second, true)
         }
+
+        fun sourceToString(source: Int): String = when {
+            source and InputDevice.SOURCE_GAMEPAD != 0 -> "GAMEPAD"
+            source and InputDevice.SOURCE_JOYSTICK != 0 -> "JOYSTICK"
+            source and InputDevice.SOURCE_KEYBOARD != 0 -> "KEYBOARD"
+            source and InputDevice.SOURCE_DPAD != 0 -> "DPAD"
+            source and InputDevice.SOURCE_MOUSE != 0 -> "MOUSE"
+            source and InputDevice.SOURCE_TOUCHPAD != 0 -> "TOUCHPAD"
+            else -> "SRC_$source"
+        }
     }
 
     private var screenWidth: Int = 0
@@ -85,25 +117,24 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         if (event == null) return false
         if (event.repeatCount > 0) return false
 
+        lastKeyTime = System.currentTimeMillis()
         val btn = keyEventToButton(event)
+        val source = sourceToString(event.source)
+        val deviceName = try { event.device?.name } catch (_: Exception) { null }
+
         runCatching { AppContainer.require() }
             .getOrNull()
             ?.bluetoothController
             ?.dispatchAccessibilityKey(btn)
 
-        val source = sourceToString(event.source)
-        Log.i(TAG, "onKeyEvent: keyCode=${event.keyCode} action=${event.action} src=$source -> ${btn.buttonName}/${btn.buttonId} pressed=${btn.isPressed}")
-        return false
-    }
-
-    private fun sourceToString(source: Int): String {
-        return when {
-            source and InputDevice.SOURCE_GAMEPAD != 0 -> "GAMEPAD"
-            source and InputDevice.SOURCE_JOYSTICK != 0 -> "JOYSTICK"
-            source and InputDevice.SOURCE_KEYBOARD != 0 -> "KEYBOARD"
-            source and InputDevice.SOURCE_DPAD != 0 -> "DPAD"
-            else -> "SRC_$source"
+        synchronized(keyListeners) {
+            for (l in keyListeners.toList()) {
+                runCatching { l.onKeyCaptured(btn, source, deviceName) }
+            }
         }
+
+        Log.i(TAG, "onKeyEvent: keyCode=${event.keyCode} action=${event.action} src=$source device=$deviceName -> ${btn.buttonName}/${btn.buttonId}")
+        return false
     }
 
     override fun onServiceConnected() {
