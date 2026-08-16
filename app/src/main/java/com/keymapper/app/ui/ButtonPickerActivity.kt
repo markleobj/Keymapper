@@ -81,12 +81,30 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
         KeyMapperAccessibilityService.addKeyListener(this)
         mainHandler.post(statusRunnable)
         appendLog("🔔 已向无障碍服务注册按键监听器")
-        imeFocusTarget?.postDelayed({
-            imeFocusTarget?.requestFocus()
-            val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
-            imm.showSoftInput(imeFocusTarget, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
-            appendLog("⌨️ 已强制激活 KeyMapper 输入法")
-        }, 300)
+        forceImeConnection()
+    }
+
+    private fun forceImeConnection() {
+        val target = imeFocusTarget ?: return
+        val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+
+        target.post {
+            target.requestFocus()
+            appendLog("⌨️ EditText 已请求焦点: hasFocus=${target.hasFocus()}")
+        }
+        target.postDelayed({
+            target.requestFocus()
+            val showing = imm.showSoftInput(target, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            val active = imm.isActive
+            val enabled = imm.enabledInputMethodList
+            appendLog("⌨️ showSoftInput=$showing IME active=$active")
+            appendLog("⌨️ 已启用输入法: ${enabled.map { it.id }}")
+        }, 500)
+        target.postDelayed({
+            val count = com.keymapper.app.inputmethod.KeyMapperImeService.getImeKeyCount()
+            val active = imm.isActive
+            appendLog("⌨️ 最终状态: IME.active=$active, IME捕获按键累计=$count")
+        }, 1500)
     }
 
     override fun onPause() {
@@ -198,16 +216,23 @@ class ButtonPickerActivity : AppCompatActivity(), KeyMapperAccessibilityService.
         }
 
         imeFocusTarget = android.widget.EditText(this).apply {
-            visibility = View.INVISIBLE
+            visibility = View.VISIBLE
             isFocusable = true
-            isFocusableInTouchMode = true
-            width = 1
-            height = 1
+            isFocusableInTouchMode = false
+            isClickable = false
+            isLongClickable = false
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
             setBackgroundResource(0)
             textSize = 1f
-            alpha = 0f
+            alpha = 0.01f
+            setPadding(0, 0, 0, 0)
+            setSingleLine()
+            setHint("")
+            inputType = android.text.InputType.TYPE_NULL
         }
-        root.addView(imeFocusTarget, LinearLayout.LayoutParams(1, 1))
+        root.addView(imeFocusTarget, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ).apply { height = 0 })
 
         val toolbar = Toolbar(this).apply {
             setBackgroundColor(Color.parseColor("#FF3F51B5"))
