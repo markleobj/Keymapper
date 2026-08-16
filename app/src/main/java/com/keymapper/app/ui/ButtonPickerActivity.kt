@@ -5,7 +5,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.keymapper.app.KeyMapperApp
+import com.keymapper.app.AppContainer
 import com.keymapper.app.R
 import com.keymapper.app.bluetooth.ConnectionState
 import com.keymapper.app.databinding.ActivityButtonPickerBinding
@@ -18,7 +18,7 @@ import kotlinx.coroutines.launch
 class ButtonPickerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityButtonPickerBinding
-    private lateinit var app: KeyMapperApp
+    private lateinit var app: AppContainer
 
     private var captureJob: Job? = null
     private var lastButton: HidButtonEvent? = null
@@ -28,7 +28,7 @@ class ButtonPickerActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityButtonPickerBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        app = application as KeyMapperApp
+        app = AppContainer.getOrCreate(this)
 
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)

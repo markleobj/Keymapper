@@ -7,7 +7,7 @@ import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.keymapper.app.KeyMapperApp
+import com.keymapper.app.AppContainer
 import com.keymapper.app.R
 import com.keymapper.app.databinding.ActivityMappingConfigBinding
 import com.keymapper.app.model.ActionType
@@ -18,7 +18,7 @@ import java.util.UUID
 class MappingConfigActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMappingConfigBinding
-    private lateinit var app: KeyMapperApp
+    private lateinit var app: AppContainer
 
     private var editingId: String? = null
     private var selectedButton: String = ""
@@ -37,7 +37,7 @@ class MappingConfigActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMappingConfigBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        app = application as KeyMapperApp
+        app = AppContainer.getOrCreate(this)
 
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)

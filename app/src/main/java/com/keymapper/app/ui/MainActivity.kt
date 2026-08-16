@@ -13,7 +13,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.keymapper.app.KeyMapperApp
+import com.keymapper.app.AppContainer
 import com.keymapper.app.R
 import com.keymapper.app.bluetooth.ConnectionState
 import com.keymapper.app.databinding.ActivityMainBinding
@@ -26,9 +26,7 @@ import kotlinx.coroutines.withContext
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
-    private lateinit var app: KeyMapperApp
-    private lateinit var deviceAdapter: DeviceAdapter
-    private lateinit var mappingAdapter: MappingAdapter
+    private var app: AppContainer? = null
 
     private var PERMISSION_REQUEST_CODE = 100
 
@@ -36,14 +34,36 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        app = application as KeyMapperApp
 
+        // 1. 先把 UI 画出来 —— 必须在 100ms 内返回
         setupToolbar()
-        requestPermissions()
-        setupDeviceTab()
-        setupMappingTab()
         setupAccessibilityCheck()
-        startEventCollectors()
+
+        // 2. 后台线程里初始化所有业务对象 + 请求权限
+        lifecycleScope.launch(Dispatchers.Default) {
+            try {
+                val container = AppContainer.getOrCreate(this@MainActivity)
+                app = container
+
+                requestPermissions()
+
+                withContext(Dispatchers.Main) {
+                    setupDeviceTab()
+                    setupMappingTab()
+                }
+
+                startEventCollectors()
+            } catch (e: Throwable) {
+                Log.e(TAG, "init failed", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "初始化失败: ${e.message}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     override fun onResume() {
@@ -52,26 +72,6 @@ class MainActivity : AppCompatActivity() {
             setupAccessibilityCheck()
         } catch (e: Exception) {
             Log.w(TAG, "accessibility check failed", e)
-        }
-    }
-
-    private fun startEventCollectors() {
-        lifecycleScope.launch(Dispatchers.Default) {
-            app.bluetoothController.buttonEvents.collect { event ->
-                try {
-                    app.mappingEngine.onButtonEvent(event)
-                } catch (e: Exception) {
-                    Log.e(TAG, "button event dispatch failed", e)
-                }
-            }
-        }
-
-        lifecycleScope.launch(Dispatchers.Default) {
-            app.mappingRepository.mappings.collect { list ->
-                withContext(Dispatchers.Main) {
-                    app.mappingEngine.updateActiveMappings(list)
-                }
-            }
         }
     }
 
@@ -90,22 +90,47 @@ class MainActivity : AppCompatActivity() {
             } else {
                 binding.accessibilityCard.visibility = android.view.View.GONE
             }
-            val serviceRunning = KeyMapperAccessibilityService.isRunning()
-            app.mappingEngine.setEnabled(
-                serviceRunning &&
-                    app.bluetoothController.connectionState.value == ConnectionState.CONNECTED
-            )
         } catch (e: Exception) {
             Log.w(TAG, "accessibility check failed", e)
         }
     }
 
-    private fun setupDeviceTab() {
-        deviceAdapter = DeviceAdapter(
-            onConnect = { address ->
-                lifecycleScope.launch {
+    private fun startEventCollectors() {
+        val container = app ?: return
+
+        lifecycleScope.launch(Dispatchers.Default) {
+            try {
+                container.bluetoothController.buttonEvents.collect { event ->
                     try {
-                        if (app.bluetoothController.connect(address)) {
+                        container.mappingEngine.onButtonEvent(event)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "button event dispatch failed", e)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "buttonEvents collect failed", e)
+            }
+        }
+
+        lifecycleScope.launch(Dispatchers.Default) {
+            try {
+                container.mappingRepository.mappings.collect { list ->
+                    container.mappingEngine.updateActiveMappings(list)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "mappings collect failed", e)
+            }
+        }
+    }
+
+    private fun setupDeviceTab() {
+        val container = app ?: return
+
+        val deviceAdapter = DeviceAdapter(
+            onConnect = { address ->
+                lifecycleScope.launch(Dispatchers.Default) {
+                    try {
+                        if (container.bluetoothController.connect(address)) {
                             Toast.makeText(
                                 this@MainActivity,
                                 "正在连接…",
@@ -137,7 +162,7 @@ class MainActivity : AppCompatActivity() {
             },
             onDisconnect = {
                 try {
-                    app.bluetoothController.disconnect()
+                    container.bluetoothController.disconnect()
                 } catch (e: Exception) {
                     Log.e(TAG, "disconnect failed", e)
                 }
@@ -148,7 +173,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.Default) {
             try {
-                app.bluetoothController.connectionState.collect { state ->
+                container.bluetoothController.connectionState.collect { state ->
                     withContext(Dispatchers.Main) {
                         deviceAdapter.updateConnectionState(state)
                         setupAccessibilityCheck()
@@ -160,7 +185,7 @@ class MainActivity : AppCompatActivity() {
         }
         lifecycleScope.launch(Dispatchers.Default) {
             try {
-                app.bluetoothController.connectedDevice.collect { device ->
+                container.bluetoothController.connectedDevice.collect { device ->
                     withContext(Dispatchers.Main) {
                         deviceAdapter.updateConnectedDevice(device?.address)
                     }
@@ -171,35 +196,43 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnRefreshDevices.setOnClickListener {
-            lifecycleScope.launch {
+            lifecycleScope.launch(Dispatchers.Default) {
                 try {
-                    val devices = app.bluetoothController.getPairedDevices()
-                    deviceAdapter.submitList(devices)
+                    val devices = container.bluetoothController.getPairedDevices()
+                    withContext(Dispatchers.Main) {
+                        deviceAdapter.submitList(devices)
+                    }
                 } catch (e: SecurityException) {
-                    Toast.makeText(
-                        this@MainActivity,
-                        "请先授予蓝牙权限",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "请先授予蓝牙权限",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                     requestPermissions()
                 } catch (e: Exception) {
                     Log.e(TAG, "refresh devices failed", e)
-                    Toast.makeText(
-                        this@MainActivity,
-                        "获取设备失败: ${e.message}",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "获取设备失败: ${e.message}",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
                 }
             }
         }
     }
 
     private fun setupMappingTab() {
-        mappingAdapter = MappingAdapter(
+        val container = app ?: return
+
+        val mappingAdapter = MappingAdapter(
             onToggle = { config, enabled ->
                 lifecycleScope.launch(Dispatchers.Default) {
                     try {
-                        app.mappingRepository.update(config.copy(enabled = enabled))
+                        container.mappingRepository.update(config.copy(enabled = enabled))
                     } catch (e: Exception) {
                         Log.e(TAG, "toggle mapping failed", e)
                     }
@@ -208,7 +241,7 @@ class MainActivity : AppCompatActivity() {
             onDelete = { config ->
                 lifecycleScope.launch(Dispatchers.Default) {
                     try {
-                        app.mappingRepository.remove(config.id)
+                        container.mappingRepository.remove(config.id)
                     } catch (e: Exception) {
                         Log.e(TAG, "delete mapping failed", e)
                     }
@@ -225,7 +258,7 @@ class MainActivity : AppCompatActivity() {
 
         lifecycleScope.launch(Dispatchers.Default) {
             try {
-                app.mappingRepository.mappings.collect { list ->
+                container.mappingRepository.mappings.collect { list ->
                     withContext(Dispatchers.Main) {
                         mappingAdapter.submitList(list)
                         binding.emptyMappings.visibility =
@@ -255,7 +288,13 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }
         if (need.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, need.toTypedArray(), PERMISSION_REQUEST_CODE)
+            runOnUiThread {
+                ActivityCompat.requestPermissions(
+                    this,
+                    need.toTypedArray(),
+                    PERMISSION_REQUEST_CODE
+                )
+            }
         }
     }
 
