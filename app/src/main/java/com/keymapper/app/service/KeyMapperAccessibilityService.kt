@@ -72,6 +72,41 @@ class KeyMapperAccessibilityService : AccessibilityService() {
         var currentPackageLabel: String? = null
             private set
 
+        @JvmStatic
+        fun getImeForwardCount(): Int {
+            return try { com.keymapper.app.inputmethod.KeyMapperImeService.getImeKeyCount() } catch (_: Exception) { 0 }
+        }
+
+        @JvmStatic
+        fun getImeActive(): Boolean {
+            return try { com.keymapper.app.inputmethod.KeyMapperImeService.isActive() } catch (_: Exception) { false }
+        }
+
+        @JvmStatic
+        fun refreshForegroundPackage() {
+            val svc = instance ?: return
+            runCatching {
+                val windows = svc.windows
+                if (windows.isNullOrEmpty()) return@runCatching
+                val top = windows
+                    .sortedByDescending { it.layer }
+                    .firstOrNull { w -> w.isActive && w.isFocused }
+                    ?: windows.sortedByDescending { it.layer }.firstOrNull()
+                val root = top?.root
+                val pkg = root?.packageName?.toString()
+                if (!pkg.isNullOrBlank() && pkg != "com.keymapper.app") {
+                    if (pkg != currentPackageName) {
+                        currentPackageName = pkg
+                        currentPackageLabel = runCatching {
+                            val info = svc.packageManager.getApplicationInfo(pkg, 0)
+                            svc.packageManager.getApplicationLabel(info).toString()
+                        }.getOrNull()
+                        Log.i(TAG, "📱 getWindows 刷新前台: $pkg (${currentPackageLabel ?: "?"})")
+                    }
+                }
+            }
+        }
+
         private val keyListeners = mutableListOf<KeyListener>()
 
         fun addKeyListener(listener: KeyListener) {
@@ -131,6 +166,7 @@ class KeyMapperAccessibilityService : AccessibilityService() {
     private var screenHeight: Int = 0
     private var imeBridge: InputMethod? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val MY_PACKAGE = "com.keymapper.app"
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -243,17 +279,20 @@ class KeyMapperAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            val pkg = event.packageName?.toString() ?: return
-            if (pkg == currentPackageName) return
-            currentPackageName = pkg
-            currentPackageLabel = runCatching {
-                val pm = packageManager
-                val info = pm.getApplicationInfo(pkg, 0)
-                pm.getApplicationLabel(info).toString()
-            }.getOrNull()
-            Log.i(TAG, "📱 前台 APP: $pkg (${currentPackageLabel ?: "?"})")
-        }
+        val type = event.eventType
+        if (type != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            && type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+
+        val pkg = event.packageName?.toString() ?: return
+        if (pkg == MY_PACKAGE) return
+
+        if (pkg == currentPackageName) return
+        currentPackageName = pkg
+        currentPackageLabel = runCatching {
+            val info = packageManager.getApplicationInfo(pkg, 0)
+            packageManager.getApplicationLabel(info).toString()
+        }.getOrNull()
+        Log.i(TAG, "📱 前台 APP: $pkg (${currentPackageLabel ?: "?"})")
     }
 
     override fun onInterrupt() {}

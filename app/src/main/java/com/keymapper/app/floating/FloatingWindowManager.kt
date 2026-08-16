@@ -187,14 +187,17 @@ class FloatingWindowManager(private val context: Context) {
         debugJob = scope.launch {
             while (true) {
                 val tv = panelView?.findViewById<TextView>(R.id.tv_debug) ?: break
+                KeyMapperAccessibilityService.refreshForegroundPackage()
                 val a11yCount = KeyMapperAccessibilityService.getA11yKeyCount()
+                val imeCount = KeyMapperAccessibilityService.getImeForwardCount()
+                val imeOn = KeyMapperAccessibilityService.getImeActive()
                 val engineSummary = com.keymapper.app.mapping.MappingEngine.getDebugSummary()
                 val currentPkg = KeyMapperAccessibilityService.currentPackageName ?: "?"
                 val currentLabel = KeyMapperAccessibilityService.currentPackageLabel
                 val pkgDisplay = if (currentLabel != null) "$currentLabel($currentPkg)" else currentPkg
                 val combined = buildString {
                     appendLine("📱 当前APP: $pkgDisplay")
-                    appendLine("♿ 无障碍按键捕获: $a11yCount")
+                    appendLine("♿ A11y按键: $a11yCount  🔤 IME: $imeCount (${if (imeOn) "✅" else "❌"})")
                     append(engineSummary)
                 }
                 tv.text = combined

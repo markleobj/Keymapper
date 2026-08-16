@@ -107,6 +107,7 @@ class CoordinatePickerOverlay(private val context: Context) {
                     val ny = (rawY / screenH).coerceIn(0f, 1f)
                     Log.i(TAG, "picked: raw=($rawX,$rawY) norm=($nx,$ny)")
 
+                    KeyMapperAccessibilityService.refreshForegroundPackage()
                     val pkg = KeyMapperAccessibilityService.currentPackageName
                     val intent = Intent(ACTION_PICK_RESULT).apply {
                         putExtra(EXTRA_X, nx)
@@ -116,7 +117,7 @@ class CoordinatePickerOverlay(private val context: Context) {
                     LocalBroadcastManager.getInstance(context).sendBroadcast(intent)
                     sendGlobalBroadcast(intent)
 
-                    Toast.makeText(context, String.format("已拾取 X=%.2f Y=%.2f", nx, ny), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, String.format("已拾取 X=%.2f Y=%.2f (APP: %s)", nx, ny, pkg ?: "?"), Toast.LENGTH_SHORT).show()
                     remove()
                     current = null
                     bringK2erToFront()
