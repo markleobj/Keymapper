@@ -6,20 +6,19 @@
     android:layout_height="match_parent"
     android:background="@color/background">
 
-    <com.google.android.material.appbar.AppBarLayout
+    <!-- 用原生 Toolbar 而不是 MaterialToolbar -->
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        app:layout_constraintTop_toTopOf="parent">
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/primary"
+        app:titleTextColor="@android:color/white"
+        app:popupTheme="@style/ThemeOverlay.AppCompat.Light"
+        app:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+        app:layout_constraintTop_toTopOf="parent" />
 
-        <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/toolbar"
-            android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:background="@color/primary"
-            app:titleTextColor="@android:color/white" />
-    </com.google.android.material.appbar.AppBarLayout>
-
-    <com.google.android.material.card.MaterialCardView
+    <!-- 无障碍服务提示卡片 —— 用 CardView (AppCompat) -->
+    <androidx.cardview.widget.CardView
         android:id="@+id/accessibilityCard"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
@@ -50,7 +49,7 @@
                 android:layout_marginTop="8dp"
                 android:text="@string/open_accessibility_settings" />
         </LinearLayout>
-    </com.google.android.material.card.MaterialCardView>
+    </androidx.cardview.widget.CardView>
 
     <LinearLayout
         android:layout_width="0dp"
@@ -73,7 +72,6 @@
 
         <Button
             android:id="@+id/btnRefreshDevices"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="刷新列表"
@@ -88,7 +86,8 @@
             android:clipToPadding="false"
             android:paddingBottom="8dp" />
 
-        <com.google.android.material.button.MaterialButton
+        <!-- 用 AppCompat Button 替换 MaterialButton -->
+        <androidx.appcompat.widget.AppCompatButton
             android:id="@+id/btnAddMapping"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
