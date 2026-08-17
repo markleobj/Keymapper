@@ -1,242 +1,195 @@
 package com.keymapper.app.mapping
 
 import android.content.Context
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
+import android.util.Log
 import com.google.gson.Gson
+import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
-import com.keymapper.app.model.MappingConfig
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
-
-private val Context.mappingDataStore by preferencesDataStore(name = "keymapper_mappings")
-private val Context.profileDataStore by preferencesDataStore(name = "keymapper_profiles")
+import com.keymapper.app.model.AppConfig
+import com.keymapper.app.model.Mapping
+import com.keymapper.app.model.Scene
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 class MappingRepository(private val context: Context) {
 
-    private val gson = Gson()
-
     companion object {
-        const val GLOBAL_PKG = "__GLOBAL__"
-        const val DEFAULT_PROFILE = "默认"
-    }
+        private const val TAG = "MappingRepo-K2ER"
+        private const val FILE_NAME = "k2er_profiles.json"
 
-    private fun allProfilesKey(pkg: String) = stringPreferencesKey("all_profiles_of_$pkg")
-    private fun currentProfileKey(pkg: String) = stringPreferencesKey("current_profile_of_$pkg")
-    private fun profileMappingsKey(pkg: String, profile: String) =
-        stringPreferencesKey("profile_${pkg}_$profile")
+        @Volatile
+        private var instance: MappingRepository? = null
 
-    private suspend fun readJson(key: androidx.datastore.preferences.core.Preferences.Key<String>): String =
-        context.profileDataStore.data.map { it[key] ?: "" }.first()
-
-    private suspend fun writeJson(key: androidx.datastore.preferences.core.Preferences.Key<String>, value: String) {
-        context.profileDataStore.edit { it[key] = value }
-    }
-
-    // ---- 方案列表 ----
-    suspend fun listProfilesFor(pkg: String): List<String> {
-        val json = readJson(allProfilesKey(pkg))
-        if (json.isBlank()) return listOf(DEFAULT_PROFILE)
-        return runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
-            gson.fromJson<List<String>>(json, type) ?: listOf(DEFAULT_PROFILE)
-        }.getOrDefault(listOf(DEFAULT_PROFILE))
-    }
-
-    suspend fun currentProfileFor(pkg: String): String {
-        val saved = readJson(currentProfileKey(pkg))
-        if (saved.isNotBlank()) return saved
-        val profiles = listProfilesFor(pkg)
-        return profiles.firstOrNull() ?: DEFAULT_PROFILE
-    }
-
-    suspend fun switchProfileFor(pkg: String, profile: String) {
-        writeJson(currentProfileKey(pkg), profile)
-    }
-
-    suspend fun addProfileFor(pkg: String, name: String) {
-        val list = listProfilesFor(pkg).toMutableList()
-        if (name !in list) {
-            list.add(name)
-            writeJson(allProfilesKey(pkg), gson.toJson(list))
-        }
-        switchProfileFor(pkg, name)
-    }
-
-    suspend fun deleteProfileFor(pkg: String, name: String) {
-        val list = listProfilesFor(pkg).filter { it != name }.toMutableList()
-        if (list.isEmpty()) list.add(DEFAULT_PROFILE)
-        writeJson(allProfilesKey(pkg), gson.toJson(list))
-        context.profileDataStore.edit { it.remove(profileMappingsKey(pkg, name)) }
-        if (currentProfileFor(pkg) == name) {
-            switchProfileFor(pkg, list.first())
-        }
-    }
-
-    suspend fun renameProfileFor(pkg: String, old: String, new: String) {
-        val list = listProfilesFor(pkg).map { if (it == old) new else it }
-        writeJson(allProfilesKey(pkg), gson.toJson(list))
-        val oldVal = readJson(profileMappingsKey(pkg, old))
-        if (oldVal.isNotBlank()) {
-            writeJson(profileMappingsKey(pkg, new), oldVal)
-            context.profileDataStore.edit { it.remove(profileMappingsKey(pkg, old)) }
-        }
-        if (currentProfileFor(pkg) == old) switchProfileFor(pkg, new)
-    }
-
-    // ---- 映射读写 ----
-    private fun parseMappings(json: String): List<MappingConfig> {
-        if (json.isBlank()) return emptyList()
-        return runCatching {
-            val type = object : TypeToken<List<MappingConfig>>() {}.type
-            gson.fromJson<List<MappingConfig>>(json, type) ?: emptyList()
-        }.getOrDefault(emptyList())
-    }
-
-    suspend fun getMappingsFor(pkg: String, profile: String): List<MappingConfig> {
-        val json = readJson(profileMappingsKey(pkg, profile))
-        return parseMappings(json)
-    }
-
-    suspend fun getCurrentMappingsFor(pkg: String): List<MappingConfig> {
-        val profile = currentProfileFor(pkg)
-        return getMappingsFor(pkg, profile)
-    }
-
-    suspend fun saveMappingsFor(pkg: String, profile: String, list: List<MappingConfig>) {
-        writeJson(profileMappingsKey(pkg, profile), gson.toJson(list))
-    }
-
-    suspend fun saveCurrentMappingsFor(pkg: String, list: List<MappingConfig>) {
-        val profile = currentProfileFor(pkg)
-        saveMappingsFor(pkg, profile, list)
-    }
-
-    suspend fun addMappingFor(pkg: String, cfg: MappingConfig) {
-        val list = getCurrentMappingsFor(pkg).filter { it.id != cfg.id } + cfg
-        saveCurrentMappingsFor(pkg, list)
-    }
-
-    suspend fun removeMappingFor(pkg: String, id: String) {
-        val list = getCurrentMappingsFor(pkg).filter { it.id != id }
-        saveCurrentMappingsFor(pkg, list)
-    }
-
-    suspend fun updateMappingFor(pkg: String, cfg: MappingConfig) {
-        addMappingFor(pkg, cfg)
-    }
-
-    // ---- 汇总：某 APP 当前激活方案的所有映射 + 全局映射 ----
-    suspend fun getActiveMappingsForApp(currentPkg: String?): List<MappingConfig> {
-        val result = mutableListOf<MappingConfig>()
-        val pkg = currentPkg
-        if (!pkg.isNullOrBlank()) {
-            result.addAll(getCurrentMappingsFor(pkg))
-        }
-        result.addAll(getCurrentMappingsFor(GLOBAL_PKG))
-        return result
-    }
-
-    // ---- 扫描所有已配置的 APP ----
-    suspend fun listConfiguredApps(): List<String> {
-        // 通过枚举 DataStore 所有 key 来提取
-        val all = context.profileDataStore.data.first().asMap().keys
-        val pkgSet = mutableSetOf<String>()
-        val prefix = "all_profiles_of_"
-        for (k in all) {
-            val name = k.name
-            if (name.startsWith(prefix)) {
-                val pkg = name.removePrefix(prefix)
-                if (pkg.isNotBlank()) pkgSet.add(pkg)
-            }
-            if (name.startsWith("profile_")) {
-                val rest = name.removePrefix("profile_")
-                val parts = rest.split("_", limit = 2)
-                if (parts.size == 2) pkgSet.add(parts[0])
+        fun getInstance(context: Context): MappingRepository {
+            return instance ?: synchronized(this) {
+                instance ?: MappingRepository(context.applicationContext).also { instance = it }
             }
         }
-        return pkgSet.toList()
     }
 
-    // ---- 兼容旧全局 Profile（迁移用） ----
-    suspend fun migrateIfNeeded(): Boolean {
-        val legacyCurrent = readJson(stringPreferencesKey("current_profile"))
-        if (legacyCurrent.isBlank()) return false
-        val legacyListJson = readJson(stringPreferencesKey("all_profiles"))
-        if (legacyListJson.isBlank()) return false
-        val legacyList: List<String> = runCatching {
-            val type = object : TypeToken<List<String>>() {}.type
-            gson.fromJson<List<String>>(legacyListJson, type) ?: emptyList()
-        }.getOrDefault(emptyList())
-        if (legacyList.isEmpty()) return false
+    private val gson: Gson = GsonBuilder().setPrettyPrinting().create()
+    private val dataFile: File by lazy { File(context.filesDir, FILE_NAME) }
 
-        // 把旧的全局 "默认" profile 的映射迁到 GLOBAL_PKG
-        val legacyDefaultJson = readJson(stringPreferencesKey("profile_${legacyList.first()}"))
-        if (legacyDefaultJson.isNotBlank()) {
-            writeJson(profileMappingsKey(GLOBAL_PKG, DEFAULT_PROFILE), legacyDefaultJson)
-            writeJson(allProfilesKey(GLOBAL_PKG), gson.toJson(listOf(DEFAULT_PROFILE)))
-            writeJson(currentProfileKey(GLOBAL_PKG), DEFAULT_PROFILE)
-        }
-        // 清空旧 key
-        context.profileDataStore.edit { prefs ->
-            legacyList.forEach { prefs.remove(stringPreferencesKey("profile_$it")) }
-            prefs.remove(stringPreferencesKey("all_profiles"))
-            prefs.remove(stringPreferencesKey("current_profile"))
-        }
-        return true
+    private val _apps = MutableStateFlow<List<AppConfig>>(emptyList())
+    val apps: StateFlow<List<AppConfig>> = _apps.asStateFlow()
+
+    init {
+        load()
     }
 
-    // ---- Flow：某 APP 当前方案映射 ----
-    fun currentMappingsFlowFor(pkg: String): Flow<List<MappingConfig>> {
-        val profileKey = currentProfileKey(pkg)
-        val mappingsKey = androidx.datastore.preferences.core.stringPreferencesKey("PLACEHOLDER")
-        return context.profileDataStore.data.map { prefs ->
-            val profile = prefs[profileKey] ?: DEFAULT_PROFILE
-            val json = prefs[profileMappingsKey(pkg, profile)] ?: ""
-            parseMappings(json)
-        }
-    }
-
-    fun currentMappingsFlowForGlobal(): Flow<List<MappingConfig>> =
-        currentMappingsFlowFor(GLOBAL_PKG)
-
-    // ---- 兼容旧 API（MainActivity 等还在用） ----
-    private val allAppsWithProfiles = mutableSetOf<String>()
-
-    val mappings: Flow<List<MappingConfig>> = context.profileDataStore.data.map { prefs ->
-        val result = mutableListOf<MappingConfig>()
-        // 收集所有 GLOBAL 映射 + 已配置 APP 当前方案的映射
-        val pkgSet = mutableSetOf<String>()
-        prefs.asMap().keys.forEach { k ->
-            if (k.name.startsWith("current_profile_of_")) {
-                val pkg = k.name.removePrefix("current_profile_of_")
-                if (pkg.isNotBlank()) pkgSet.add(pkg)
+    private fun load() {
+        try {
+            if (!dataFile.exists()) {
+                _apps.value = emptyList()
+                return
             }
+            val json = dataFile.readText()
+            val type = object : TypeToken<List<AppConfig>>() {}.type
+            _apps.value = gson.fromJson(json, type) ?: emptyList()
+            Log.i(TAG, "✅ 加载 ${_apps.value.size} 个 APP 配置")
+        } catch (e: Throwable) {
+            Log.e(TAG, "加载配置失败", e)
+            _apps.value = emptyList()
         }
-        for (pkg in pkgSet) {
-            val profile = prefs[currentProfileKey(pkg)] ?: DEFAULT_PROFILE
-            val json = prefs[profileMappingsKey(pkg, profile)] ?: continue
-            result.addAll(parseMappings(json))
-        }
-        result
     }
 
-    suspend fun getCurrent(): List<MappingConfig> {
-        val all = context.profileDataStore.data.first().asMap().keys
-        val pkgSet = mutableSetOf<String>()
-        for (k in all) {
-            if (k.name.startsWith("current_profile_of_")) {
-                val pkg = k.name.removePrefix("current_profile_of_")
-                if (pkg.isNotBlank()) pkgSet.add(pkg)
-            }
+    private fun save() {
+        try {
+            val json = gson.toJson(_apps.value)
+            dataFile.writeText(json)
+            Log.i(TAG, "💾 保存 ${_apps.value.size} 个 APP 配置 → ${dataFile.absolutePath}")
+        } catch (e: Throwable) {
+            Log.e(TAG, "保存配置失败", e)
         }
-        val result = mutableListOf<MappingConfig>()
-        for (pkg in pkgSet) {
-            val profile = currentProfileFor(pkg)
-            result.addAll(getMappingsFor(pkg, profile))
+    }
+
+    fun upsertApp(app: AppConfig) {
+        val list = _apps.value.toMutableList()
+        val idx = list.indexOfFirst { it.packageName == app.packageName }
+        if (idx >= 0) list[idx] = app else list.add(app)
+        _apps.value = list
+        save()
+    }
+
+    fun getApp(packageName: String): AppConfig? {
+        return _apps.value.firstOrNull { it.packageName == packageName }
+    }
+
+    fun getOrCreateApp(packageName: String, appName: String = ""): AppConfig {
+        return getApp(packageName) ?: run {
+            val newApp = AppConfig(
+                packageName = packageName,
+                appName = appName.ifBlank { packageName.substringAfterLast('.') },
+                scenes = listOf(Scene(name = "全局")),
+                activeSceneId = null,
+                enabled = true
+            )
+            upsertApp(newApp)
+            newApp
         }
-        return result
+    }
+
+    fun deleteApp(packageName: String) {
+        _apps.value = _apps.value.filter { it.packageName != packageName }
+        save()
+    }
+
+    fun toggleAppEnabled(packageName: String) {
+        val app = getApp(packageName) ?: return
+        upsertApp(app.copy(enabled = !app.enabled))
+    }
+
+    fun toggleSceneEnabled(packageName: String, sceneId: String) {
+        val app = getApp(packageName) ?: return
+        val scenes = app.scenes.map { s ->
+            if (s.id == sceneId) s.copy(enabled = !s.enabled) else s
+        }
+        upsertApp(app.copy(scenes = scenes))
+    }
+
+    fun addScene(packageName: String, sceneName: String): Scene? {
+        val app = getApp(packageName) ?: return null
+        val scene = Scene(name = sceneName)
+        upsertApp(app.copy(scenes = app.scenes + scene))
+        return scene
+    }
+
+    fun deleteScene(packageName: String, sceneId: String) {
+        val app = getApp(packageName) ?: return
+        if (app.scenes.size <= 1) return
+        upsertApp(app.copy(scenes = app.scenes.filter { it.id != sceneId }))
+    }
+
+    fun setActiveScene(packageName: String, sceneId: String?) {
+        val app = getApp(packageName) ?: return
+        upsertApp(app.copy(activeSceneId = sceneId))
+    }
+
+    fun addMapping(packageName: String, sceneId: String, mapping: Mapping) {
+        val app = getApp(packageName) ?: return
+        val scenes = app.scenes.map { s ->
+            if (s.id == sceneId) s.copy(mappings = s.mappings + mapping) else s
+        }
+        upsertApp(app.copy(scenes = scenes))
+    }
+
+    fun updateMapping(packageName: String, sceneId: String, mapping: Mapping) {
+        val app = getApp(packageName) ?: return
+        val scenes = app.scenes.map { s ->
+            if (s.id == sceneId) {
+                s.copy(mappings = s.mappings.map { if (it.id == mapping.id) mapping else it })
+            } else s
+        }
+        upsertApp(app.copy(scenes = scenes))
+    }
+
+    fun deleteMapping(packageName: String, sceneId: String, mappingId: String) {
+        val app = getApp(packageName) ?: return
+        val scenes = app.scenes.map { s ->
+            if (s.id == sceneId) {
+                s.copy(mappings = s.mappings.filter { it.id != mappingId })
+            } else s
+        }
+        upsertApp(app.copy(scenes = scenes))
+    }
+
+    fun toggleMappingEnabled(packageName: String, sceneId: String, mappingId: String) {
+        val app = getApp(packageName) ?: return
+        val scenes = app.scenes.map { s ->
+            if (s.id == sceneId) {
+                s.copy(mappings = s.mappings.map { m ->
+                    if (m.id == mappingId) m.copy(enabled = !m.enabled) else m
+                })
+            } else s
+        }
+        upsertApp(app.copy(scenes = scenes))
+    }
+
+    fun getActiveMappingsForApp(packageName: String?): List<Mapping> {
+        val pkg = packageName ?: return emptyList()
+        val app = getApp(pkg) ?: return emptyList()
+        if (!app.enabled) return emptyList()
+
+        val targetScene = app.activeSceneId?.let { sid -> app.scenes.firstOrNull { it.id == sid && it.enabled } }
+            ?: app.scenes.firstOrNull { it.enabled }
+            ?: app.scenes.firstOrNull()
+
+        return targetScene?.mappings?.filter { it.enabled } ?: emptyList()
+    }
+
+    fun exportJson(): String = gson.toJson(_apps.value)
+    fun importJson(json: String): Boolean {
+        return try {
+            val type = object : TypeToken<List<AppConfig>>() {}.type
+            val list = gson.fromJson<List<AppConfig>>(json, type)
+            _apps.value = list
+            save()
+            true
+        } catch (e: Throwable) {
+            Log.e(TAG, "import 失败", e)
+            false
+        }
     }
 }

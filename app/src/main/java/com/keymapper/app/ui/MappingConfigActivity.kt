@@ -1,548 +1,304 @@
 package com.keymapper.app.ui
 
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.drawable.Drawable
 import android.os.Bundle
-import android.util.Log
 import android.view.Gravity
-import android.view.View
-import android.view.ViewGroup
-import android.widget.AdapterView
+import android.view.KeyEvent
 import android.widget.ArrayAdapter
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.Spinner
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.AppCompatButton
-import androidx.appcompat.widget.Toolbar
-import com.keymapper.app.service.KeyMapperAccessibilityService
-import android.view.KeyEvent
-import androidx.lifecycle.lifecycleScope
 import com.keymapper.app.AppContainer
-import com.keymapper.app.model.ActionStep
+import com.keymapper.app.R
 import com.keymapper.app.model.ActionType
-import com.keymapper.app.model.MappingConfig
+import com.keymapper.app.model.Mapping
+import com.keymapper.app.service.InputMonitor
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
-import com.keymapper.app.model.HidButtonEvent
 
 class MappingConfigActivity : AppCompatActivity() {
 
-    private lateinit var tvPickedButton: TextView
-    private lateinit var spinnerAction: Spinner
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    private var targetButton: String = ""
+    private var targetX: Float = 0f
+    private var targetY: Float = 0f
+    private var pkgName: String = ""
+    private var sceneId: String? = null
+    private var editMappingId: String? = null
+
     private lateinit var etName: EditText
-    private lateinit var etTargetX: EditText
-    private lateinit var etTargetY: EditText
-    private lateinit var targetGroup: LinearLayout
+    private lateinit var tvButton: TextView
+    private lateinit var tvCoord: TextView
+    private lateinit var spinnerType: Spinner
     private lateinit var etDuration: EditText
-    private lateinit var durationGroup: LinearLayout
-    private lateinit var btnPickButton: AppCompatButton
-    private lateinit var swBlocked: Switch
-    private lateinit var comboStepsContainer: LinearLayout
-    private lateinit var comboGroup: LinearLayout
-
-    private var app: AppContainer? = null
-    private var editingId: String? = null
-    private var selectedButton: String = ""
-    private var selectedTargetX: Float = 0.5f
-    private var selectedTargetY: Float = 0.5f
-    private var selectedActionType: ActionType = ActionType.TAP
-    private var longPressDuration: Long = 500L
-    private var blocked: Boolean = true
-    private var configName: String = ""
-    private var comboSteps = mutableListOf<ActionStep>()
-    private var pendingPickStepIndex: Int = -1
-    private var selectedTargetPackage: String? = null
-    private var tvTargetPackageHint: TextView? = null
-
-    private val buttonPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val btn = result.data?.getStringExtra(EXTRA_PICKED_BUTTON)
-            Log.i("MappingConfig", "buttonPicker result: btn=$btn")
-            if (!btn.isNullOrBlank()) {
-                selectedButton = btn
-                tvPickedButton.text = btn
-                Toast.makeText(this, "已选: $btn", Toast.LENGTH_SHORT).show()
-            }
-        } else {
-            Log.i("MappingConfig", "buttonPicker cancelled or failed: rc=${result.resultCode}")
-        }
-    }
-
-    private val coordPickerLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val nx = result.data?.getFloatExtra(CoordinatePickerActivity.EXTRA_PICKED_X, 0f) ?: 0f
-            val ny = result.data?.getFloatExtra(CoordinatePickerActivity.EXTRA_PICKED_Y, 0f) ?: 0f
-            val pkg = result.data?.getStringExtra(CoordinatePickerActivity.EXTRA_PICKED_PACKAGE)
-            selectedTargetPackage = pkg
-            Log.i("MappingConfig", "coordPicker result: ($nx, $ny) pkg=$pkg step=$pendingPickStepIndex")
-            Toast.makeText(this, String.format("已拾取 X=%.2f Y=%.2f", nx, ny), Toast.LENGTH_SHORT).show()
-            refreshTargetPackageHint()
-            if (pendingPickStepIndex >= 0 && pendingPickStepIndex < comboSteps.size) {
-                comboSteps[pendingPickStepIndex] = comboSteps[pendingPickStepIndex].copy(targetX = nx, targetY = ny)
-                renderComboSteps()
-            } else {
-                etTargetX.setText(nx.toString())
-                etTargetY.setText(ny.toString())
-            }
-        }
-        pendingPickStepIndex = -1
-    }
-
-    companion object {
-        const val EXTRA_MAPPING_ID = "mapping_id"
-        const val REQUEST_BUTTON_PICKER = 200
-        const val EXTRA_PICKED_BUTTON = "picked_button"
-        private const val TAG = "MappingConfig"
-    }
-
-    private val actionChinese = mapOf(
-        ActionType.TAP to "点击",
-        ActionType.LONG_PRESS to "长按",
-        ActionType.SWIPE to "滑动",
-        ActionType.MOUSE_MOVE to "鼠标模拟移动",
-        ActionType.COMBO to "组合动作",
-        ActionType.DO_NOTHING to "只屏蔽（不执行）"
-    )
+    private lateinit var tvTitle: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(buildProgrammaticUI())
+        AppContainer.getOrCreate(this)
 
-        try {
-            app = AppContainer.getOrCreate(this)
-        } catch (e: Throwable) {
-            Toast.makeText(this, "初始化失败: ${e.message}", Toast.LENGTH_LONG).show()
-            finish(); return
+        pkgName = intent.getStringExtra("PKG") ?: ""
+        sceneId = intent.getStringExtra("SCENE_ID")
+        editMappingId = intent.getStringExtra("MAPPING_ID")
+
+        if (pkgName.isBlank()) {
+            pkgName = InputMonitor.currentPackageName ?: ""
+        }
+        if (pkgName.isBlank()) {
+            promptSelectApp()
+            return
+        }
+        if (sceneId == null) {
+            val app = AppContainer.getOrCreate(this).mappingRepository.getOrCreateApp(pkgName)
+            sceneId = app.activeSceneId ?: app.scenes.firstOrNull()?.id
         }
 
-        editingId = intent.getStringExtra(EXTRA_MAPPING_ID)
-        if (editingId == null) {
-            selectedTargetPackage = intent.getStringExtra("target_package_preselect")
-        }
-        setupActionTypeSpinner()
-        setupFields()
-        setupListeners()
+        buildUI()
+        if (editMappingId != null) loadExisting()
+    }
 
-        editingId?.let { id ->
-            lifecycleScope.launch(Dispatchers.Default) {
-                try {
-                    app!!.mappingRepository.mappings.collect { list ->
-                        list.firstOrNull { it.id == id }?.let { config ->
-                            withContext(Dispatchers.Main) { fillFromConfig(config) }
-                        }
-                    }
-                } catch (_: Exception) {}
+    private fun promptSelectApp() {
+        val apps = queryInstalledApps()
+        val names = apps.map { "${it.second}\n${it.first}" }
+        AlertDialog.Builder(this)
+            .setTitle("选择目标 APP")
+            .setItems(names.toTypedArray()) { _, i ->
+                pkgName = apps[i].first
+                AppContainer.getOrCreate(this).mappingRepository.getOrCreateApp(pkgName, apps[i].second)
+                val app = AppContainer.getOrCreate(this).mappingRepository.getOrCreateApp(pkgName)
+                sceneId = app.scenes.firstOrNull()?.id
+                buildUI()
             }
-        }
-    }
-    override fun dispatchKeyEvent(event: android.view.KeyEvent?): Boolean {
-        event ?: return super.dispatchKeyEvent(null)
-        if (event.repeatCount > 0) return super.dispatchKeyEvent(event)
-        val btn = KeyMapperAccessibilityService.keyEventToButton(event)
-        Log.i(TAG, "[CFG KEY] act=${event.action} kc=${event.keyCode} -> $btn")
-        val container = app
-        if (container != null && event.action == android.view.KeyEvent.ACTION_DOWN) {
-            runCatching { container.mappingEngine.onButtonEvent(
-  HidButtonEvent(btn, btn, true, System.currentTimeMillis(), event.device?.name),
-  KeyMapperAccessibilityService.currentPackageName
-) }
-        }
-        return super.dispatchKeyEvent(event)
+            .setNegativeButton("取消") { _, _ -> finish() }
+            .show()
     }
 
-    private fun setupActionTypeSpinner() {
-        val items = ActionType.values().map { actionChinese[it] ?: it.name }
-        spinnerAction.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, items).apply {
-            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        }
+    private fun queryInstalledApps(): List<Pair<String, String>> {
+        val pm = packageManager
+        return pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            .filter { it.packageName != packageName && !it.packageName.startsWith("com.android") && !it.packageName.startsWith("com.google") }
+            .map { it.packageName to pm.getApplicationLabel(it).toString() }
+            .sortedBy { it.second }
+            .take(100)
     }
 
-    private fun setupFields() {
-        etTargetX.setText("0.5")
-        etTargetY.setText("0.5")
-        etDuration.setText("500")
-        durationGroup.visibility = View.GONE
-        comboGroup.visibility = View.GONE
-        targetGroup.visibility = View.VISIBLE
-        refreshTargetPackageHint()
+    @Suppress("SetTextI18n")
+    private fun buildUI() {
+        val pm = packageManager
+        val appName = runCatching { pm.getApplicationLabel(pm.getApplicationInfo(pkgName, 0)).toString() }
+            .getOrDefault(pkgName.substringAfterLast('.'))
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xFFF5F5F5.toInt())
+        }
+
+        tvTitle = TextView(this).apply {
+            text = if (editMappingId != null) "编辑映射" else "新建映射"
+            textSize = 18f; setTextColor(0xFF212121.toInt())
+            setPadding(24, 24, 24, 8)
+        }
+        root.addView(tvTitle)
+
+        val tvSub = TextView(this).apply {
+            text = "📱 $appName ($pkgName)"
+            textSize = 13f; setTextColor(0xFF616161.toInt())
+            setPadding(24, 0, 24, 16)
+        }
+        root.addView(tvSub)
+
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(16, 16, 16, 16)
+        }
+
+        // 按键
+        val row1 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        row1.addView(TextView(this).apply {
+            text = "🎮 手柄按键"; textSize = 14f; width = 120; setTextColor(0xFF424242.toInt())
+        })
+        tvButton = TextView(this).apply {
+            text = "未选择"; textSize = 14f; setTextColor(0xFF1976D2.toInt())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { pickButton() }
+        }
+        row1.addView(tvButton)
+        card.addView(row1)
+
+        // 坐标
+        val row2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        row2.addView(TextView(this).apply {
+            text = "📍 坐标"; textSize = 14f; width = 120; setTextColor(0xFF424242.toInt())
+        })
+        tvCoord = TextView(this).apply {
+            text = "未选择"; textSize = 14f; setTextColor(0xFF1976D2.toInt())
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { pickCoordinate() }
+        }
+        row2.addView(tvCoord)
+        card.addView(row2)
+
+        // 动作类型
+        val row3 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        row3.addView(TextView(this).apply {
+            text = "⚡ 动作类型"; textSize = 14f; width = 120; setTextColor(0xFF424242.toInt())
+        })
+        spinnerType = Spinner(this).apply {
+            adapter = ArrayAdapter(this@MappingConfigActivity, android.R.layout.simple_spinner_dropdown_item,
+                ActionType.values().map { it.zh })
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        row3.addView(spinnerType)
+        card.addView(row3)
+
+        // 长按/滑动时长
+        val row4 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        row4.addView(TextView(this).apply {
+            text = "⏱ 时长(ms)"; textSize = 14f; width = 120; setTextColor(0xFF424242.toInt())
+        })
+        etDuration = EditText(this).apply {
+            hint = "300"; inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        row4.addView(etDuration)
+        card.addView(row4)
+
+        // 名称
+        val row0 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 8, 0, 8)
+        }
+        row0.addView(TextView(this).apply {
+            text = "🏷 名称"; textSize = 14f; width = 120; setTextColor(0xFF424242.toInt())
+        })
+        etName = EditText(this).apply {
+            hint = "可选，方便识别"; inputType = android.text.InputType.TYPE_CLASS_TEXT
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        row0.addView(etName)
+        card.addView(row0)
+
+        root.addView(card)
+
+        // 操作按钮
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(16, 24, 16, 16)
+        }
+        val btnSave = Button(this).apply {
+            text = "💾 保存"; textSize = 14f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 }
+            setOnClickListener { save() }
+        }
+        val btnCancel = Button(this).apply {
+            text = "取消"; textSize = 14f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { finish() }
+        }
+        actionRow.addView(btnSave); actionRow.addView(btnCancel)
+        root.addView(actionRow)
+
+        setContentView(root)
     }
 
-    private fun setupListeners() {
-        btnPickButton.setOnClickListener {
-            buttonPickerLauncher.launch(Intent(this, ButtonPickerActivity::class.java))
-        }
-        spinnerAction.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                selectedActionType = ActionType.values()[position]
-                durationGroup.visibility = if (selectedActionType == ActionType.LONG_PRESS
-                        || selectedActionType == ActionType.MOUSE_MOVE) View.VISIBLE else View.GONE
-                comboGroup.visibility = if (selectedActionType == ActionType.COMBO) View.VISIBLE else View.GONE
-                targetGroup.visibility = if (selectedActionType == ActionType.COMBO
-                        || selectedActionType == ActionType.DO_NOTHING) View.GONE else View.VISIBLE
-            }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-        findViewById<AppCompatButton>(1001).setOnClickListener { save() }
-        findViewById<AppCompatButton>(1002).setOnClickListener { finish() }
+    private fun pickButton() {
+        startActivityForResult(Intent(this, ButtonPickerActivity::class.java), REQ_BUTTON)
     }
 
-    private fun fillFromConfig(config: MappingConfig) {
-        configName = config.name
-        selectedButton = config.button
-        selectedTargetX = config.targetX
-        selectedTargetY = config.targetY
-        selectedActionType = config.actionType
-        longPressDuration = config.duration
-        blocked = config.blocked
-        selectedTargetPackage = config.targetPackage
-        comboSteps.clear()
-        comboSteps.addAll(config.steps)
-        renderComboSteps()
+    private fun pickCoordinate() {
+        startActivityForResult(Intent(this, CoordinatePickerActivity::class.java), REQ_COORD)
+    }
 
-        etName.setText(config.name)
-        tvPickedButton.text = selectedButton
-        etTargetX.setText(config.targetX.toString())
-        etTargetY.setText(config.targetY.toString())
-        etDuration.setText(config.duration.toString())
-        swBlocked.isChecked = blocked
-        val idx = ActionType.values().indexOf(config.actionType)
-        if (idx >= 0) spinnerAction.setSelection(idx)
-        refreshTargetPackageHint()
+    private fun loadExisting() {
+        val app = AppContainer.getOrCreate(this).mappingRepository.getApp(pkgName) ?: return
+        val scene = app.scenes.firstOrNull { it.id == sceneId } ?: return
+        val m = scene.mappings.firstOrNull { it.id == editMappingId } ?: return
+        targetButton = m.button
+        targetX = m.targetX; targetY = m.targetY
+        tvButton.text = m.button
+        tvCoord.text = "(${m.targetX.toInt()}, ${m.targetY.toInt()})"
+        spinnerType.setSelection(ActionType.values().indexOf(m.actionType))
+        etDuration.setText(m.durationMs.toString())
+        etName.setText(m.name)
     }
 
     private fun save() {
-        configName = etName.text?.toString()?.trim().orEmpty()
-        selectedButton = tvPickedButton.text.toString().ifBlank { selectedButton }
-        if (selectedButton.isBlank()) {
-            Toast.makeText(this, "请先选择手柄按键", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val x = etTargetX.text.toString().toFloatOrNull()
-        val y = etTargetY.text.toString().toFloatOrNull()
-        if (x == null || y == null || x !in 0f..1f || y !in 0f..1f) {
-            Toast.makeText(this, "坐标需在 0-1 范围（屏幕比例）", Toast.LENGTH_SHORT).show()
-            return
-        }
-        selectedTargetX = x
-        selectedTargetY = y
-        longPressDuration = etDuration.text.toString().toLongOrNull() ?: 500L
-        blocked = swBlocked.isChecked
+        if (targetButton.isBlank()) { Toast.makeText(this, "请选择按键", Toast.LENGTH_SHORT).show(); return }
+        if (targetX == 0f && targetY == 0f) { Toast.makeText(this, "请选择坐标", Toast.LENGTH_SHORT).show(); return }
 
-        val config = MappingConfig(
-            id = editingId ?: UUID.randomUUID().toString(),
-            name = configName,
-            button = selectedButton,
-            actionType = selectedActionType,
-            targetX = selectedTargetX,
-            targetY = selectedTargetY,
-            duration = longPressDuration,
-            enabled = true,
-            blocked = blocked,
-            steps = if (selectedActionType == ActionType.COMBO) comboSteps.toList() else emptyList(),
-            targetPackage = selectedTargetPackage
+        val type = ActionType.values()[spinnerType.selectedItemPosition]
+        val duration = etDuration.text.toString().toLongOrNull() ?: 300L
+
+        val mapping = Mapping(
+            id = editMappingId ?: UUID.randomUUID().toString(),
+            name = etName.text.toString(),
+            button = targetButton,
+            actionType = type,
+            targetX = targetX,
+            targetY = targetY,
+            durationMs = duration,
+            enabled = true
         )
 
-        val repoPkg = if (selectedTargetPackage.isNullOrBlank()) {
-            com.keymapper.app.mapping.MappingRepository.GLOBAL_PKG
-        } else {
-            selectedTargetPackage!!
+        scope.launch {
+            val repo = AppContainer.getOrCreate(this@MappingConfigActivity).mappingRepository
+            val sid = sceneId ?: repo.getOrCreateApp(pkgName).scenes.firstOrNull()?.id ?: return@launch
+            if (editMappingId != null) {
+                repo.updateMapping(pkgName, sid, mapping)
+            } else {
+                repo.addMapping(pkgName, sid, mapping)
+            }
+            Toast.makeText(this@MappingConfigActivity, "✅ 已保存", Toast.LENGTH_SHORT).show()
+            finish()
         }
+    }
 
-        lifecycleScope.launch(Dispatchers.Default) {
-            try {
-                app!!.mappingRepository.addMappingFor(repoPkg, config)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MappingConfigActivity, "已保存", Toast.LENGTH_SHORT).show()
-                    finish()
-                }
-            } catch (e: Exception) {
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@MappingConfigActivity, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (resultCode != RESULT_OK || data == null) return
+        when (requestCode) {
+            REQ_BUTTON -> {
+                targetButton = data.getStringExtra("BUTTON") ?: return
+                tvButton.text = targetButton
+            }
+            REQ_COORD -> {
+                targetX = data.getFloatExtra("X", 0f)
+                targetY = data.getFloatExtra("Y", 0f)
+                tvCoord.text = "(${targetX.toInt()}, ${targetY.toInt()})"
             }
         }
     }
 
-    private fun renderComboSteps() {
-        comboStepsContainer.removeAllViews()
-        comboSteps.forEachIndexed { i, step ->
-            comboStepsContainer.addView(buildStepRow(i, step))
-        }
-        if (comboSteps.isEmpty()) {
-            comboStepsContainer.addView(TextView(this).apply {
-                text = "还没有步骤，点下方『添加一步』"
-                textSize = 12f
-                setTextColor(Color.parseColor("#FF9E9E9E"))
-                setPadding(dp(4), dp(4), dp(4), dp(4))
-            })
-        }
+    companion object {
+        private const val REQ_BUTTON = 1
+        private const val REQ_COORD = 2
     }
-
-    private fun buildStepRow(index: Int, step: ActionStep): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        row.addView(TextView(this).apply {
-            text = "#${index + 1}"
-            textSize = 12f
-            setTextColor(Color.parseColor("#FF616161"))
-            width = dp(28)
-        })
-        val typeSpinner = Spinner(this).apply {
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            adapter = ArrayAdapter(this@MappingConfigActivity, android.R.layout.simple_spinner_item,
-                ActionType.values().filter { it != ActionType.COMBO }.map { actionChinese[it]!! }
-            ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-            val realTypes = ActionType.values().filter { it != ActionType.COMBO }
-            setSelection(realTypes.indexOf(step.type).coerceAtLeast(0))
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(parent: AdapterView<*>?, view: View?, pos: Int, id: Long) {
-                    comboSteps[index] = comboSteps[index].copy(type = realTypes[pos])
-                }
-                override fun onNothingSelected(parent: AdapterView<*>?) {}
-            }
-        }
-        row.addView(typeSpinner)
-        val etX = EditText(this).apply {
-            hint = "X"
-            setText(step.targetX.toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-            layoutParams = LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(2) }
-            setOnFocusChangeListener { _, _ ->
-                val v = text.toString().toFloatOrNull() ?: 0f
-                comboSteps[index] = comboSteps[index].copy(targetX = v)
-            }
-        }
-        row.addView(etX)
-        val etY = EditText(this).apply {
-            hint = "Y"
-            setText(step.targetY.toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-            layoutParams = LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(2) }
-            setOnFocusChangeListener { _, _ ->
-                val v = text.toString().toFloatOrNull() ?: 0f
-                comboSteps[index] = comboSteps[index].copy(targetY = v)
-            }
-        }
-        row.addView(etY)
-        val btnStepPick = AppCompatButton(this).apply {
-            text = "📍"
-            textSize = 11f
-            layoutParams = LinearLayout.LayoutParams(dp(36), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(2) }
-            setOnClickListener {
-                pendingPickStepIndex = index
-                coordPickerLauncher.launch(Intent(this@MappingConfigActivity, CoordinatePickerActivity::class.java))
-            }
-        }
-        row.addView(btnStepPick)
-        val etDelay = EditText(this).apply {
-            hint = "延时ms"
-            setText(step.delayMs.toString())
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            layoutParams = LinearLayout.LayoutParams(dp(70), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(2) }
-            setOnFocusChangeListener { _, _ ->
-                val v = text.toString().toLongOrNull() ?: 0L
-                comboSteps[index] = comboSteps[index].copy(delayMs = v)
-            }
-        }
-        row.addView(etDelay)
-        val btnDel = AppCompatButton(this).apply {
-            text = "✕"
-            textSize = 10f
-            layoutParams = LinearLayout.LayoutParams(dp(36), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(2) }
-            setOnClickListener {
-                comboSteps.removeAt(index)
-                renderComboSteps()
-            }
-        }
-        row.addView(btnDel)
-        return row
-    }
-
-    private fun buildProgrammaticUI(): LinearLayout {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#FFF5F5F5"))
-        }
-
-        val toolbar = Toolbar(this).apply {
-            setBackgroundColor(Color.parseColor("#FF3F51B5"))
-            setTitleTextColor(Color.WHITE)
-            title = "配置映射"
-        }
-        root.addView(toolbar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(56)))
-        setSupportActionBar(toolbar)
-        toolbar.setNavigationOnClickListener { finish() }
-
-        val scrollView = ScrollView(this).apply { isFillViewport = true }
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(16))
-        }
-
-        content.addView(textLabel("📝 映射名称（可选）"))
-        etName = EditText(this).apply {
-            hint = "例如：抖音点赞 / 游戏技能1"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT
-        }
-        content.addView(etName)
-
-        content.addView(textLabel("🎮 手柄按键"))
-        tvPickedButton = TextView(this).apply {
-            text = "未选择"
-            textSize = 16f
-            setTextColor(Color.parseColor("#FF3F51B5"))
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        content.addView(tvPickedButton)
-        btnPickButton = AppCompatButton(this).apply { text = "🎬 录制按键" }
-        content.addView(btnPickButton)
-
-        // ---- 屏蔽原事件 ----
-        val blockRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(8), 0, dp(4))
-        }
-        blockRow.addView(TextView(this).apply {
-            text = "🚫 屏蔽原按键"
-            textSize = 14f
-            setTextColor(Color.parseColor("#FF212121"))
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        })
-        swBlocked = Switch(this).apply { isChecked = true }
-        blockRow.addView(swBlocked)
-        content.addView(blockRow)
-        content.addView(TextView(this).apply {
-            text = "（开启后该手柄键不会触发系统默认行为，只执行你的映射）"
-            textSize = 11f; setTextColor(Color.parseColor("#FF9E9E9E"))
-        })
-
-        content.addView(textLabel("⚡ 操作类型"))
-        spinnerAction = Spinner(this)
-        content.addView(spinnerAction)
-
-        targetGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        targetGroup.addView(textLabel("📍 目标坐标 (0~1)"))
-        targetGroup.addView(TextView(this).apply {
-            text = "X=0 屏幕最左 / X=1 最右  ·  Y=0 最上 / Y=1 最下"
-            textSize = 10f; setTextColor(Color.parseColor("#FF9E9E9E"))
-        })
-        val coordRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        etTargetX = EditText(this).apply {
-            hint = "X"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        etTargetY = EditText(this).apply {
-            hint = "Y"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
-        }
-        val btnPickCoord = AppCompatButton(this).apply {
-            text = "📍拾取"
-            textSize = 12f
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { marginStart = dp(8) }
-            setOnClickListener {
-                pendingPickStepIndex = -1
-                coordPickerLauncher.launch(Intent(this@MappingConfigActivity, CoordinatePickerActivity::class.java))
-            }
-        }
-        coordRow.addView(etTargetX)
-        coordRow.addView(etTargetY)
-        coordRow.addView(btnPickCoord)
-        targetGroup.addView(coordRow)
-        tvTargetPackageHint = TextView(this).apply {
-            textSize = 12f
-            setTextColor(Color.parseColor("#FF3F51B5"))
-            setPadding(0, dp(6), 0, dp(2))
-        }
-        targetGroup.addView(tvTargetPackageHint)
-        content.addView(targetGroup)
-
-        durationGroup = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        durationGroup.addView(textLabel("⏱ 时长 (ms)"))
-        etDuration = EditText(this).apply {
-            hint = "500"
-            inputType = android.text.InputType.TYPE_CLASS_NUMBER
-        }
-        durationGroup.addView(etDuration)
-        content.addView(durationGroup)
-
-        // ---- COMBO 步骤编辑 ----
-        comboGroup = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(12), 0, dp(4))
-        }
-        comboGroup.addView(textLabel("🎬 组合动作步骤"))
-        comboGroup.addView(TextView(this).apply {
-            text = "每个步骤有：动作类型 + 坐标 + 之前延时"
-            textSize = 11f; setTextColor(Color.parseColor("#FF9E9E9E"))
-        })
-        comboStepsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        comboGroup.addView(comboStepsContainer)
-        val btnAddStep = AppCompatButton(this).apply {
-            text = "➕ 添加一步"
-            setOnClickListener {
-                comboSteps.add(ActionStep(type = ActionType.TAP, targetX = 0.5f, targetY = 0.5f, delayMs = 100))
-                renderComboSteps()
-            }
-        }
-        comboGroup.addView(btnAddStep)
-        content.addView(comboGroup)
-
-        val btnRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(0, dp(16), 0, 0)
-        }
-        val saveBtn = AppCompatButton(this).apply {
-            text = "💾 保存"
-            id = 1001
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        val cancelBtn = AppCompatButton(this).apply {
-            text = "取消"
-            id = 1002
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(8) }
-        }
-        btnRow.addView(saveBtn)
-        btnRow.addView(cancelBtn)
-        content.addView(btnRow)
-
-        scrollView.addView(content)
-        root.addView(scrollView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-        return root
-    }
-
-    private fun textLabel(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 14f
-        setTextColor(Color.parseColor("#FF666666"))
-        setPadding(0, dp(12), 0, dp(2))
-    }
-
-    private fun refreshTargetPackageHint() {
-        val hint = tvTargetPackageHint ?: return
-        val pkg = selectedTargetPackage
-        hint.text = if (pkg.isNullOrBlank()) {
-            "💡 未绑定：请点『拾取』回到目标 app 上取坐标"
-        } else {
-            "🎯 已绑定 APP：$pkg"
-        }
-    }
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 }

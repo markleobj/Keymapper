@@ -19,17 +19,16 @@ import com.keymapper.app.AppContainer
 import com.keymapper.app.R
 import com.keymapper.app.mapping.MappingRepository
 import com.keymapper.app.mapping.ShizukuShell
-import com.keymapper.app.model.ActionType
-import com.keymapper.app.model.MappingConfig
-import com.keymapper.app.service.KeyMapperAccessibilityService
-import com.keymapper.app.ui.MappingConfigActivity
+import com.keymapper.app.model.AppConfig
+import com.keymapper.app.service.InputMonitor
 import com.keymapper.app.ui.MainActivity
+import com.keymapper.app.ui.MappingConfigActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -39,413 +38,231 @@ class FloatingWindowManager(private val context: Context) {
     companion object {
         private const val TAG = "FloatMgr-K2ER"
 
-        @Volatile
-        private var instance: FloatingWindowManager? = null
-
-        fun getInstance(context: Context): FloatingWindowManager {
+        @Volatile private var instance: FloatingWindowManager? = null
+        fun getInstance(c: Context): FloatingWindowManager {
             return instance ?: synchronized(this) {
-                instance ?: FloatingWindowManager(context.applicationContext).also { instance = it }
+                instance ?: FloatingWindowManager(c.applicationContext).also { instance = it }
             }
         }
-
-        fun canDrawOverlay(context: Context): Boolean {
-            return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                Settings.canDrawOverlays(context)
-            } else true
-        }
+        fun canDrawOverlay(c: Context): Boolean =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(c) else true
     }
 
-    private val windowManager: WindowManager =
-        context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+    private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var observeJob: Job? = null
-    private var debugJob: Job? = null
-
     private var ballView: View? = null
     private var panelView: View? = null
     private var ballParams: WindowManager.LayoutParams? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var isRunning = false
+    private var observeJob: Job? = null
+    private var refreshJob: Job? = null
 
-    private val interceptor = KeyInterceptorOverlay.getInstance(context)
+    private fun lp(w: Int, h: Int, x: Int, y: Int): WindowManager.LayoutParams {
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+        return WindowManager.LayoutParams(
+            w, h, type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START; this.x = x; this.y = y }
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     fun show() {
-        if (isRunning) {
-            Log.w(TAG, "already showing")
-            return
-        }
-        if (!canDrawOverlay(context)) {
-            Log.e(TAG, "no overlay permission")
-            return
-        }
-
-        interceptor.start()
-
-        val ball = createBallView()
-        val params = buildLayoutParams(
-            w = dp(48), h = dp(48),
-            gravity = Gravity.TOP or Gravity.START,
-            x = dp(8), y = dp(200)
-        )
+        if (isRunning) return
+        if (!canDrawOverlay(context)) { Log.e(TAG, "no overlay permission"); return }
+        val dm = context.resources.displayMetrics
+        val ball = LayoutInflater.from(context).inflate(R.layout.view_float_ball, null, false)
+        val params = lp(dp(48), dp(48), dp(8), dm.heightPixels / 3)
         try {
-            windowManager.addView(ball, params)
-            ballView = ball
-            ballParams = params
-            isRunning = true
-
-            ball.setOnTouchListener(createDragTouchListener(isBall = true))
-            ball.setOnClickListener { togglePanel() }
-
-            observeMappings()
-            updateBallColor()
-            Log.i(TAG, "✅ K2er ball shown + interceptor started")
-        } catch (e: Throwable) {
-            Log.e(TAG, "show ball failed", e)
-        }
+            wm.addView(ball, params); ballView = ball; ballParams = params; isRunning = true
+            ball.setOnTouchListener(dragBall); ball.setOnClickListener { togglePanel() }
+            startObserve(); startRefresh(); updateBall()
+            Log.i(TAG, "✅ K2er ball shown (NOT_FOCUSABLE)")
+        } catch (e: Throwable) { Log.e(TAG, "show ball failed", e) }
     }
 
     fun hide() {
-        interceptor.stop()
-        try {
-            panelView?.let { windowManager.removeViewImmediate(it) }
-            ballView?.let { windowManager.removeViewImmediate(it) }
-        } catch (_: Throwable) {}
-        panelView = null
-        ballView = null
-        panelParams = null
-        ballParams = null
-        isRunning = false
-        observeJob?.cancel()
-        observeJob = null
-        Log.i(TAG, "hidden + interceptor stopped")
-    }
-
-    private fun updateBallColor() {
-        val ball = ballView ?: return
-        val shizukuOk = ShizukuShell.isPermissionGranted()
-        val interceptorOk = interceptor.isRunning()
-
-        scope.launch(Dispatchers.Default) {
-            val repo = runCatching { AppContainer.getOrCreate(context).mappingRepository }.getOrNull()
-            val currentPkg = KeyMapperAccessibilityService.currentPackageName
-            val activeCount = if (repo != null) {
-                repo.getActiveMappingsForApp(currentPkg).count { it.enabled }
-            } else 0
-
-            withContext(Dispatchers.Main) {
-                val indicator = ball.findViewById<TextView>(R.id.ball_indicator) ?: return@withContext
-                indicator.text = when {
-                    !shizukuOk -> "!"
-                    !interceptorOk -> "?"
-                    activeCount > 0 -> "●"
-                    else -> "○"
-                }
-                val color = when {
-                    !shizukuOk -> 0xFFE53935.toInt()
-                    !interceptorOk -> 0xFFFFA000.toInt()
-                    activeCount > 0 -> 0xFF43A047.toInt()
-                    else -> 0xFF9E9E9E.toInt()
-                }
-                indicator.setTextColor(color)
-            }
-        }
+        refreshJob?.cancel(); observeJob?.cancel()
+        runCatching { panelView?.let { wm.removeViewImmediate(it) } }
+        runCatching { ballView?.let { wm.removeViewImmediate(it) } }
+        panelView = null; ballView = null; panelParams = null; ballParams = null; isRunning = false
     }
 
     private fun togglePanel() {
-        if (panelView != null) {
-            hidePanel()
-        } else {
-            showPanel()
-        }
+        if (panelView != null) hidePanel() else showPanel()
     }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun showPanel() {
         val ball = ballView ?: return
-        val panel = createPanelView()
-        val ballLoc = IntArray(2).also { ball.getLocationOnScreen(it) }
-
-        val panelW = dp(280)
-        val panelH = WindowManager.LayoutParams.WRAP_CONTENT
-
+        val panel = LayoutInflater.from(context).inflate(R.layout.view_float_panel, null, false)
         val dm = context.resources.displayMetrics
-        val screenW = dm.widthPixels
-        val ballSize = dp(48)
-        val gap = dp(8)
-
-        val ballCenterX = ballLoc[0] + ballSize / 2
-        val x = if (ballCenterX > screenW / 2) {
-            (ballLoc[0] - panelW - gap).coerceAtLeast(0)
-        } else {
-            (ballLoc[0] + ballSize + gap).coerceAtMost((screenW - panelW).coerceAtLeast(0))
-        }
-        val y = (ballLoc[1] + ballSize + dp(4)).coerceAtMost(dm.heightPixels - dp(200))
-
-        val params = buildLayoutParams(
-            w = panelW, h = panelH,
-            gravity = Gravity.TOP or Gravity.START,
-            x = x, y = y
-        )
-
+        val loc = IntArray(2).also { ball.getLocationOnScreen(it) }
+        val ballSize = dp(48); val panelW = dp(280); val gap = dp(8)
+        val x = (if (loc[0] + ballSize / 2 > dm.widthPixels / 2)
+            (loc[0] - panelW - gap).coerceAtLeast(0)
+        else
+            (loc[0] + ballSize + gap).coerceAtMost((dm.widthPixels - panelW).coerceAtLeast(0)))
+        val y = (loc[1] + ballSize + dp(4)).coerceAtMost(dm.heightPixels - dp(200))
         try {
-            windowManager.addView(panel, params)
-            panelView = panel
-            panelParams = params
-            panel.setOnTouchListener(createDragTouchListener(isBall = false))
-
+            wm.addView(panel, lp(panelW, WindowManager.LayoutParams.WRAP_CONTENT, x, y))
+            panelView = panel; panelParams = panel.layoutParams as? WindowManager.LayoutParams
+            panel.setOnTouchListener(dragPanel)
             panel.findViewById<View>(R.id.btn_open_main).setOnClickListener {
-                context.startActivity(Intent(context, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                })
+                context.startActivity(Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
                 hidePanel()
             }
             panel.findViewById<View>(R.id.btn_new_mapping).setOnClickListener {
-                context.startActivity(Intent(context, MappingConfigActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                })
+                context.startActivity(Intent(context, MappingConfigActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
                 hidePanel()
             }
             panel.findViewById<View>(R.id.btn_close).setOnClickListener { hidePanel() }
-
-            refreshPanel()
-            startStatusLoop()
-        } catch (e: Throwable) {
-            Log.e(TAG, "show panel failed", e)
-        }
+            scope.launch { renderPanel() }
+        } catch (e: Throwable) { Log.e(TAG, "show panel failed", e) }
     }
 
-    private fun startStatusLoop() {
-        debugJob?.cancel()
-        debugJob = scope.launch {
+    private fun hidePanel() {
+        runCatching { panelView?.let { wm.removeViewImmediate(it) } }
+        panelView = null; panelParams = null
+    }
+
+    private fun updateBall() {
+        val ball = ballView ?: return
+        val ind = ball.findViewById<TextView>(R.id.ball_indicator) ?: return
+        val shizukuOk = ShizukuShell.isPermissionGranted()
+        val active = AppContainer.getOrCreate(context).mappingRepository
+            .getActiveMappingsForApp(InputMonitor.currentPackageName).size
+        val (t, c) = when {
+            !shizukuOk -> "!" to 0xFFE53935.toInt()
+            active > 0 -> "●" to 0xFF43A047.toInt()
+            else -> "○" to 0xFF9E9E9E.toInt()
+        }
+        ind.text = t; ind.setTextColor(c)
+    }
+
+    private fun startRefresh() {
+        refreshJob?.cancel()
+        refreshJob = scope.launch(Dispatchers.Default) {
             while (true) {
-                val tv = panelView?.findViewById<TextView>(R.id.tv_debug) ?: break
-                KeyMapperAccessibilityService.refreshForegroundPackage()
-                val engineMsg = com.keymapper.app.mapping.MappingEngine.getDebugSummary()
-                val currentPkg = KeyMapperAccessibilityService.currentPackageName ?: "?"
-                val currentLabel = KeyMapperAccessibilityService.currentPackageLabel
-                val pkgDisplay = if (currentLabel != null) "$currentLabel($currentPkg)" else currentPkg
-                val shizukuOk = ShizukuShell.isPermissionGranted()
-                val interceptOk = interceptor.isRunning()
-                val combined = buildString {
-                    appendLine("📱 $pkgDisplay")
-                    appendLine("🔑 Shizuku: ${if (shizukuOk) "✅" else "❌"}  🛡️ 拦截层: ${if (interceptOk) "✅" else "❌"}")
-                    append(engineMsg)
-                }
-                tv.text = combined
-                refreshPanel()
+                InputMonitor.refreshForegroundPackage()
+                updateBall()
+                renderPanel()
                 delay(500)
             }
         }
     }
 
-    private fun hidePanel() {
-        debugJob?.cancel()
-        debugJob = null
-        try {
-            panelView?.let { windowManager.removeViewImmediate(it) }
-        } catch (_: Throwable) {}
-        panelView = null
-        panelParams = null
-    }
-
-    @SuppressLint("InflateParams")
-    private fun createBallView(): View {
-        return LayoutInflater.from(context).inflate(R.layout.view_float_ball, null, false)
-    }
-
-    @SuppressLint("InflateParams")
-    private fun createPanelView(): View {
-        return LayoutInflater.from(context).inflate(R.layout.view_float_panel, null, false)
-    }
-
-    private fun refreshPanel() {
-        val panel = panelView ?: return
-        val tvProfile = panel.findViewById<TextView>(R.id.tv_profile)
-        val tvStatus = panel.findViewById<TextView>(R.id.tv_status)
-        val listContainer = panel.findViewById<LinearLayout>(R.id.list_container)
-
-        scope.launch(Dispatchers.Default) {
-            val repo = runCatching { AppContainer.getOrCreate(context).mappingRepository }.getOrNull() ?: return@launch
-            val currentPkg = KeyMapperAccessibilityService.currentPackageName
-            val pkg = currentPkg ?: MappingRepository.GLOBAL_PKG
-            val profile = repo.currentProfileFor(pkg)
-            val mappings = repo.getActiveMappingsForApp(currentPkg)
-            val enabled = mappings.count { it.enabled }
-            val pkgLabel = currentPkg?.let { runCatching {
-                context.packageManager.getApplicationLabel(context.packageManager.getApplicationInfo(it, 0)).toString()
-            }.getOrNull() } ?: "全局"
-
-            val shizukuOk = ShizukuShell.isPermissionGranted()
-            val interceptOk = interceptor.isRunning()
-
-            withContext(Dispatchers.Main) {
-                tvProfile?.text = "📋 $pkgLabel"
-                tvStatus?.text = buildString {
-                    append(if (shizukuOk) "✅ Shizuku" else "❌ Shizuku")
-                    append(" | ")
-                    append(if (interceptOk) "✅ 拦截层" else "❌ 拦截层")
-                    append(" | ")
-                    append(if (enabled > 0) "🟢 $enabled/${mappings.size} 激活" else "⚪ 无激活")
-                }
-                renderMappingList(listContainer, mappings)
+    private fun startObserve() {
+        observeJob?.cancel()
+        observeJob = scope.launch(Dispatchers.Default) {
+            AppContainer.getOrCreate(context).mappingRepository.apps.collectLatest {
+                updateBall(); renderPanel()
             }
         }
     }
 
     @SuppressLint("SetTextI18n")
-    private fun renderMappingList(container: LinearLayout?, mappings: List<MappingConfig>) {
-        container ?: return
-        container.removeAllViews()
+    private suspend fun renderPanel() {
+        val panel = panelView ?: return
+        withContext(Dispatchers.Main) {
+            val title = panel.findViewById<TextView>(R.id.tv_profile)
+            val status = panel.findViewById<TextView>(R.id.tv_status)
+            val list = panel.findViewById<LinearLayout>(R.id.list_container)
+            val debug = panel.findViewById<TextView>(R.id.tv_debug)
 
-        if (mappings.isEmpty()) {
-            container.addView(TextView(context).apply {
-                text = "📭 ${"全局".ifBlank { "此APP" }}暂无映射"
-                textSize = 12f
-                setTextColor(0xFF9E9E9E.toInt())
-                setPadding(dp(8), dp(12), dp(8), dp(12))
-            })
-            return
+            val repo = AppContainer.getOrCreate(context).mappingRepository
+            val pkg = InputMonitor.currentPackageName
+            val pkgLabel = InputMonitor.currentPackageLabel ?: pkg?.substringAfterLast('.') ?: "未知"
+            val app = pkg?.let { repo.getApp(it) }
+            val shizukuOk = ShizukuShell.isPermissionGranted()
+            val active = repo.getActiveMappingsForApp(pkg).size
+
+            title.text = "📱 $pkgLabel"
+            status.text = "${if (shizukuOk) "✅" else "❌"} Shizuku | 🟢 $active 激活"
+            debug.text = com.keymapper.app.mapping.MappingEngine.getDebugSummary()
+
+            list.removeAllViews()
+            if (app == null) {
+                list.addView(TextView(context).apply {
+                    text = "📭 该 APP 暂无配置"
+                    textSize = 12f; setTextColor(0xFF9E9E9E.toInt())
+                    setPadding(dp(8), dp(12), dp(8), dp(12))
+                })
+            } else {
+                renderMappings(list, app, repo)
+            }
         }
+    }
 
-        val currentPkg = KeyMapperAccessibilityService.currentPackageName
-        val sorted = mappings.sortedByDescending { it.enabled }
-        sorted.forEach { cfg ->
-            val isActive = cfg.enabled && (cfg.targetPackage.isNullOrBlank() || cfg.targetPackage == currentPkg)
+    @SuppressLint("SetTextI18n")
+    private fun renderMappings(container: LinearLayout, app: AppConfig, repo: MappingRepository) {
+        val scene = app.activeSceneId?.let { app.scenes.firstOrNull { s -> s.id == it } }
+            ?: app.scenes.firstOrNull() ?: return
+        container.addView(TextView(context).apply {
+            text = "🎬 场景: ${scene.name} (${scene.mappings.size})"
+            textSize = 11f; setTextColor(0xFF616161.toInt())
+            setPadding(dp(8), dp(6), dp(8), dp(2))
+        })
+        scene.mappings.forEach { m ->
             val row = LinearLayout(context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(8), dp(10), dp(8), dp(10))
-                setBackgroundColor(when {
-                    isActive -> 0xFFE8F5E9.toInt()
-                    cfg.enabled -> 0xFFF1F8E9.toInt()
-                    else -> 0xFFFAFAFA.toInt()
-                })
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+                setBackgroundColor(if (m.enabled) 0xFFF5F5F5.toInt() else 0xFFFAFAFA.toInt())
             }
-            val indicator = TextView(context).apply {
-                text = when {
-                    isActive -> "🟢"
-                    cfg.enabled -> "🔵"
-                    else -> "⚪"
-                }
-                textSize = 14f
-                width = dp(28)
-            }
+            val ind = TextView(context).apply { text = if (m.enabled) "🟢" else "⚪"; textSize = 14f; width = dp(28) }
             val label = TextView(context).apply {
-                text = buildString {
-                    append(cfg.name.ifBlank { cfg.button })
-                    append("\n")
-                    append(cfg.button).append(" → ").append(actionTypeCn(cfg.actionType))
-                    if (!cfg.targetPackage.isNullOrBlank()) {
-                        append(" @").append(cfg.targetPackage.substringAfterLast('.'))
-                    }
-                }
-                textSize = 11f
-                setTextColor(if (isActive) 0xFF1B5E20.toInt() else if (cfg.enabled) 0xFF616161.toInt() else 0xFF9E9E9E.toInt())
+                text = "${m.button} → ${m.actionType.zh}${if (m.name.isNotBlank()) " (${m.name})" else ""}"
+                textSize = 11f; setTextColor(if (m.enabled) 0xFF212121.toInt() else 0xFF9E9E9E.toInt())
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
-            val btnToggle = AppCompatButton(context).apply {
-                text = if (cfg.enabled) "停用" else "启用"
-                textSize = 11f
+            val btn = AppCompatButton(context).apply {
+                text = if (m.enabled) "停" else "启"; textSize = 10f
                 setOnClickListener {
                     scope.launch(Dispatchers.Default) {
                         runCatching {
-                            val pkg = if (cfg.targetPackage.isNullOrBlank()) MappingRepository.GLOBAL_PKG else cfg.targetPackage
-                            AppContainer.getOrCreate(context).mappingRepository.addMappingFor(
-                                pkg!!, cfg.copy(enabled = !cfg.enabled)
-                            )
+                            val app2 = repo.getApp(app.packageName) ?: return@runCatching
+                            val scene2 = app2.scenes.firstOrNull { it.id == scene.id } ?: return@runCatching
+                            val mapping2 = scene2.mappings.firstOrNull { it.id == m.id } ?: return@runCatching
+                            repo.updateMapping(app.packageName, scene.id, mapping2.copy(enabled = !m.enabled))
                         }
                     }
                 }
             }
-            row.addView(indicator)
-            row.addView(label)
-            row.addView(btnToggle)
+            row.addView(ind); row.addView(label); row.addView(btn)
             container.addView(row)
         }
     }
 
-    private fun actionTypeCn(type: ActionType): String = when (type) {
-        ActionType.TAP -> "点击"
-        ActionType.LONG_PRESS -> "长按"
-        ActionType.SWIPE -> "滑动"
-        ActionType.MOUSE_MOVE -> "鼠标"
-        ActionType.COMBO -> "组合"
-        ActionType.DO_NOTHING -> "屏蔽"
-    }
-
-    private fun observeMappings() {
-        observeJob?.cancel()
-        observeJob = scope.launch(Dispatchers.Default) {
-            val repo = runCatching { AppContainer.getOrCreate(context).mappingRepository }.getOrNull() ?: return@launch
-            repo.mappings.collectLatest {
-                updateBallColor()
-                refreshPanel()
-            }
-        }
-    }
-
-    private fun buildLayoutParams(
-        w: Int, h: Int,
-        gravity: Int, x: Int, y: Int
-    ): WindowManager.LayoutParams {
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else
-            @Suppress("DEPRECATION")
-            WindowManager.LayoutParams.TYPE_PHONE
-
-        return WindowManager.LayoutParams(
-            w, h, type,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            this.gravity = gravity
-            this.x = x
-            this.y = y
-        }
-    }
-
     @SuppressLint("ClickableViewAccessibility")
-    private fun createDragTouchListener(isBall: Boolean): View.OnTouchListener {
-        val state = floatArrayOf(0f, 0f, 0f, 0f)
-        var moved = false
-        return View.OnTouchListener { view, event ->
-            val paramsRef = if (isBall) ballParams else panelParams
-            val params = paramsRef ?: return@OnTouchListener false
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    state[0] = params.x.toFloat()
-                    state[1] = params.y.toFloat()
-                    state[2] = event.rawX
-                    state[3] = event.rawY
-                    moved = false
-                }
+    private fun drag(ball: Boolean): View.OnTouchListener {
+        val st = floatArrayOf(0f, 0f, 0f, 0f); var moved = false
+        return View.OnTouchListener { v, e ->
+            val ref = if (ball) ballParams else panelParams
+            val p = ref ?: return@OnTouchListener false
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> { st[0] = p.x.toFloat(); st[1] = p.y.toFloat(); st[2] = e.rawX; st[3] = e.rawY; moved = false }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = event.rawX - state[2]
-                    val dy = event.rawY - state[3]
+                    val dx = e.rawX - st[2]; val dy = e.rawY - st[3]
                     if (abs(dx) > 8f || abs(dy) > 8f) {
-                        moved = true
-                        params.x = (state[0] + dx).toInt()
-                        params.y = (state[1] + dy).toInt()
-                        try {
-                            windowManager.updateViewLayout(view, params)
-                            if (isBall) ballParams = params else panelParams = params
-                        } catch (_: Throwable) {}
+                        moved = true; p.x = (st[0] + dx).toInt(); p.y = (st[1] + dy).toInt()
+                        runCatching { wm.updateViewLayout(v, p) }
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (moved && isBall) {
-                        view.performClick()
-                    }
-                    state[0] = 0f; state[1] = 0f; state[2] = 0f; state[3] = 0f
+                    if (moved && ball) v.performClick()
                 }
             }
             true
         }
     }
 
+    private val dragBall = drag(true)
+    private val dragPanel = drag(false)
     private fun dp(v: Int): Int = (v * context.resources.displayMetrics.density).toInt()
 }
