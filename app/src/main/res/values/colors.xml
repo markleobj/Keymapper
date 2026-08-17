@@ -1,11 +1,27 @@
 <resources>
-    <color name="primary">#3F51B5</color>
-    <color name="primary_dark">#303F9F</color>
-    <color name="accent">#FF4081</color>
-    <color name="background">#F5F5F5</color>
-    <color name="text_primary">#212121</color>
-    <color name="text_secondary">#757575</color>
-    <color name="divider">#BDBDBD</color>
-    <color name="success">#4CAF50</color>
-    <color name="error">#F44336</color>
+    <!-- K2ER 紫色主题 -->
+    <color name="k2er_purple">#6B46C1</color>
+    <color name="k2er_purple_dark">#4C2F8F</color>
+    <color name="k2er_purple_light">#9F7AEA</color>
+    <color name="k2er_bg">#1A1A2E</color>
+    <color name="k2er_card">#252540</color>
+    <color name="k2er_card_dark">#16162A</color>
+    <color name="k2er_text">#FFFFFF</color>
+    <color name="k2er_text_secondary">#A0A0B8</color>
+    <color name="k2er_green">#4ADE80</color>
+    <color name="k2er_red">#F87171</color>
+    <color name="k2er_divider">#2E2E4A</color>
+    <color name="k2er_gradient_start">#7C3AED</color>
+    <color name="k2er_gradient_end">#4C1D95</color>
+
+    <!-- 兼容旧引用 -->
+    <color name="primary">@color/k2er_purple</color>
+    <color name="primary_dark">@color/k2er_purple_dark</color>
+    <color name="accent">@color/k2er_purple_light</color>
+    <color name="background">@color/k2er_bg</color>
+    <color name="text_primary">@color/k2er_text</color>
+    <color name="text_secondary">@color/k2er_text_secondary</color>
+    <color name="divider">@color/k2er_divider</color>
+    <color name="success">@color/k2er_green</color>
+    <color name="error">@color/k2er_red</color>
 </resources>

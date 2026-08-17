@@ -1,115 +1,248 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+<androidx.core.widget.NestedScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/background">
+    android:fillViewport="true"
+    android:background="@color/k2er_bg">
 
-    <!-- 用原生 Toolbar 而不是 MaterialToolbar -->
-    <androidx.appcompat.widget.Toolbar
-        android:id="@+id/toolbar"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="?attr/actionBarSize"
-        android:background="@color/primary"
-        app:titleTextColor="@android:color/white"
-        app:popupTheme="@style/ThemeOverlay.AppCompat.Light"
-        app:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
-        app:layout_constraintTop_toTopOf="parent" />
-
-    <!-- 无障碍服务提示卡片 —— 用 CardView (AppCompat) -->
-    <androidx.cardview.widget.CardView
-        android:id="@+id/accessibilityCard"
-        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_margin="12dp"
-        app:cardCornerRadius="8dp"
-        app:cardElevation="2dp"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent">
+        android:orientation="vertical">
 
+        <!-- ========== 紫色渐变 Header ========== -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:padding="16dp">
+            android:background="@drawable/bg_k2er_header"
+            android:paddingTop="48dp"
+            android:paddingHorizontal="24dp"
+            android:paddingBottom="40dp">
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="KeyMapper"
+                    android:textColor="#FFFFFF"
+                    android:textSize="44sp"
+                    android:textStyle="bold"
+                    android:fontFamily="sans-serif-medium" />
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_gravity="end|center_vertical">
+
+                    <ImageView
+                        android:id="@+id/btnProfile"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:src="@drawable/ic_person"
+                        android:padding="4dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:contentDescription="profile" />
+
+                    <ImageView
+                        android:id="@+id/btnSettings"
+                        android:layout_width="40dp"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="8dp"
+                        android:src="@drawable/ic_settings"
+                        android:padding="4dp"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:contentDescription="settings" />
+
+                </LinearLayout>
+            </FrameLayout>
+        </LinearLayout>
+
+        <!-- ========== Banner 教程区 ========== -->
+        <LinearLayout
+            android:id="@+id/bannerSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="-24dp"
+            android:layout_marginHorizontal="16dp"
+            android:background="@drawable/bg_k2er_card"
+            android:elevation="4dp"
+            android:paddingBottom="24dp">
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="160dp"
+                android:background="@drawable/bg_k2er_header">
+
+                <ImageView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_play"
+                    android:contentDescription="play tutorial" />
+
+            </FrameLayout>
 
             <TextView
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="@string/request_accessibility"
-                android:textColor="@color/text_primary"
-                android:textStyle="bold" />
+                android:gravity="center"
+                android:text="请在开始之前观看教程"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:layout_marginTop="20dp" />
 
-            <Button
-                android:id="@+id/btnOpenSettings"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:text="@string/open_accessibility_settings" />
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
 
-    <LinearLayout
-        android:layout_width="0dp"
-        android:layout_height="0dp"
-        android:orientation="vertical"
-        android:padding="12dp"
-        app:layout_constraintTop_toBottomOf="@id/toolbar"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginTop="88dp">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="已配对的手柄"
-            android:textStyle="bold"
-            android:textColor="@color/text_primary"
-            android:textSize="16sp" />
-
-        <Button
-            android:id="@+id/btnRefreshDevices"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="刷新列表"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="8dp" />
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/devicesRecycler"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:clipToPadding="false"
-            android:paddingBottom="8dp" />
-
-        <!-- 用 AppCompat Button 替换 MaterialButton -->
-        <androidx.appcompat.widget.AppCompatButton
-            android:id="@+id/btnAddMapping"
+        <!-- ========== 功能列表区 ========== -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/btn_add_mapping"
-            android:layout_marginTop="8dp" />
+            android:orientation="vertical"
+            android:layout_marginTop="16dp"
+            android:layout_marginHorizontal="16dp"
+            android:background="@drawable/bg_k2er_card">
 
-        <TextView
-            android:id="@+id/emptyMappings"
+            <LinearLayout
+                android:id="@+id/rowActivation"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:padding="20dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/activIcon"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_dot_red"
+                    android:contentDescription="status" />
+
+                <TextView
+                    android:id="@+id/activText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="16dp"
+                    android:text="K2er 未激活"
+                    android:textColor="@color/k2er_text"
+                    android:textSize="18sp" />
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@drawable/ic_chevron_right" />
+
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/k2er_divider"
+                android:layout_marginStart="64dp" />
+
+            <LinearLayout
+                android:id="@+id/rowDevice"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:padding="20dp"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView
+                    android:id="@+id/deviceIcon"
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_dot_green"
+                    android:contentDescription="status" />
+
+                <TextView
+                    android:id="@+id/deviceText"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="16dp"
+                    android:text="设备管理 - 0个连接"
+                    android:textColor="@color/k2er_text"
+                    android:textSize="18sp" />
+
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:src="@drawable/ic_chevron_right" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- ========== 需要映射的 Apps 区 ========== -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="@string/no_mappings"
-            android:textColor="@color/text_secondary"
-            android:gravity="center"
-            android:padding="16dp"
-            android:visibility="gone" />
+            android:orientation="vertical"
+            android:layout_marginTop="24dp"
+            android:layout_marginHorizontal="16dp"
+            android:layout_marginBottom="100dp">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/mappingsRecycler"
-            android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1"
-            android:layout_marginTop="8dp" />
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="需要映射的 Apps"
+                    android:textColor="@color/k2er_text"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <ImageView
+                    android:id="@+id/btnAddApp"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_gravity="end|center_vertical"
+                    android:src="@drawable/ic_plus"
+                    android:padding="4dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:contentDescription="add app" />
+
+            </FrameLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/appsRecycler"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:nestedScrollingEnabled="false"
+                android:clipToPadding="false" />
+
+            <TextView
+                android:id="@+id/emptyApps"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="还没有添加 APP\n点右上角 + 添加你要映射的 APP"
+                android:textColor="@color/k2er_text_secondary"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:padding="32dp"
+                android:lineSpacingExtra="4dp"
+                android:visibility="gone" />
+
+        </LinearLayout>
+
     </LinearLayout>
-
-</androidx.constraintlayout.widget.ConstraintLayout>
+</androidx.core.widget.NestedScrollView>

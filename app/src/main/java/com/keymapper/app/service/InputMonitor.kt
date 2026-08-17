@@ -22,6 +22,7 @@ object InputMonitor {
     @Volatile var currentPackageName: String? = null
         private set
     @Volatile var currentPackageLabel: String? = null
+    @Volatile var deviceCount: Int = 0
         private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -118,7 +119,9 @@ object InputMonitor {
             ShizukuShell.execSync("ls /dev/input/event* 2>/dev/null")
                 .trim().split("\n").filter { it.isNotBlank() }.forEach { devices.add(it.trim()) }
         }
-        return devices.toList()
+        val found = devices.toList()
+        deviceCount = found.size
+        return found
     }
 
     private suspend fun runGeteventLoop(paths: List<String>): Boolean {

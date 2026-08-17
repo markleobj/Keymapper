@@ -11,8 +11,8 @@ android {
         applicationId = "com.keymapper.app"
         minSdk = 24
         targetSdk = 34
-        versionCode = 48
-        versionName = "2.1.3"
+        versionCode = 49
+        versionName = "2.2.0"
     }
 
     buildTypes {
