@@ -16,7 +16,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.sds100.keymapper"
+    namespace = "com.markleobj.keymapper"
     compileSdk = libs.versions.compile.sdk.get().toInt()
     buildToolsVersion = libs.versions.build.tools.get()
 
@@ -25,7 +25,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "io.github.sds100.keymapper"
+        applicationId = "com.markleobj.keymapper"
         minSdk = libs.versions.min.sdk.get().toInt()
         targetSdk = libs.versions.target.sdk.get().toInt()
 

@@ -14,7 +14,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.sds100.keymapper.base"
+    namespace = "com.markleobj.keymapper.base"
     compileSdk = libs.versions.compile.sdk.get().toInt()
 
     val versionProperties = Properties().apply {

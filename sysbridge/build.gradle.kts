@@ -8,7 +8,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.sds100.keymapper.sysbridge"
+    namespace = "com.markleobj.keymapper.sysbridge"
     compileSdk = libs.versions.compile.sdk.get().toInt()
 
     ndkVersion = "27.3.13750724"

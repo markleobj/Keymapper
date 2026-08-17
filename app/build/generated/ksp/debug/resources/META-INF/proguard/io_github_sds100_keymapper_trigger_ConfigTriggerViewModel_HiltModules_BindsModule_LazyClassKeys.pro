@@ -1,0 +1,1 @@
+-keep,allowobfuscation,allowshrinking class io.github.sds100.keymapper.trigger.ConfigTriggerViewModel
