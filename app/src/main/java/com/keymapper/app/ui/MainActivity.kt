@@ -281,51 +281,98 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+
     private fun activate() {
+        AlertDialog.Builder(this)
+            .setTitle("🔑 激活 KeyMapper (K2ER)")
+            .setMessage("需要 3 个条件（全部通过后自动启动）：\n\n" +
+                "1️⃣ Shizuku Manager 已安装 + ADB 启动 server\n" +
+                "2️⃣ KeyMapper 获得 Shizuku shell 权限\n" +
+                "3️⃣ 允许悬浮窗显示\n\n" +
+                "✅ 无无障碍  ✅ 无输入法  ✅ 无 root")
+            .setPositiveButton("开始检查") { _, _ -> doActivate() }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun doActivate() {
         if (!ShizukuShell.isBinderAvailable()) {
-            Toast.makeText(this, "⚠️ 请先安装并启动 Shizuku Manager", Toast.LENGTH_LONG).show()
             AlertDialog.Builder(this)
-                .setTitle("🔑 激活 KeyMapper")
-                .setMessage("KeyMapper 基于 K2er 技术路线：\n\n✅ 无需无障碍服务\n✅ 无需输入法\n✅ 无需 root\n\n需要 Shizuku 提供 shell 权限：\n1️⃣ 下载 Shizuku Manager\n2️⃣ ADB/Wireless Debugging 启动服务\n3️⃣ 回到本应用点『授权』")
+                .setTitle("⚠️ Shizuku server 未启动")
+                .setMessage("Shizuku Manager 的 server 还没跑起来。\n\n请：\n1. 安装 Shizuku Manager\n2. USB 连电脑开 ADB\n3. 执行 adb shell sh /data/user_de/0/moe.shizuku.privileged.api/start.sh\n4. 或直接在 Shizuku Manager 里点『启动』\n\n启动后回到本应用点『已启动』")
                 .setPositiveButton("下载 Shizuku") { _, _ ->
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")))
                 }
-                .setNeutralButton("授权") { _, _ -> requestShizuku() }
-                .setNegativeButton("关闭", null)
+                .setNeutralButton("我已启动") { _, _ -> requestShizukuPermission() }
+                .setNegativeButton("取消", null)
                 .show()
             return
         }
+        requestShizukuPermission()
+    }
+
+    private fun requestShizukuPermission() {
+        if (ShizukuShell.isPermissionGranted()) {
+            AlertDialog.Builder(this)
+                .setTitle("✅ Shizuku 已授权")
+                .setMessage("KeyMapper 已经有 Shizuku shell 权限了。继续检查悬浮窗？")
+                .setPositiveButton("继续") { _, _ -> checkOverlay() }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("📱 申请 Shizuku 权限")
+            .setMessage("即将弹出 Shizuku 系统授权对话框。\n\n请在对话框里点『允许』或『Grant』。")
+            .setPositiveButton("下一步") { _, _ ->
+                ShizukuShell.requestPermission(this) { granted ->
+                    runOnUiThread {
+                        if (granted) {
+                            Toast.makeText(this@MainActivity, "✅ Shizuku 权限已授予", Toast.LENGTH_LONG).show()
+                            checkOverlay()
+                        } else {
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("❌ 授权被拒绝")
+                                .setMessage("Shizuku 授权被拒绝了。\n\n请确认 Shizuku Manager 里 server 正在运行，然后重新点『激活』。")
+                                .setPositiveButton("好的", null)
+                                .show()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun checkOverlay() {
+        if (!Settings.canDrawOverlays(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("🖼️ 悬浮窗权限")
+                .setMessage("KeyMapper 需要悬浮窗来显示状态球。\n\n即将跳转到系统设置页，请在列表里找到 KeyMapper 并打开开关。\n\n⚠️ 授权后点返回键回到本应用。")
+                .setPositiveButton("去设置") { _, _ ->
+                    startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
+        startK2er()
+    }
+
+    private fun startK2er() {
         if (!ShizukuShell.isPermissionGranted()) {
-            requestShizuku()
+            Toast.makeText(this, "⚠️ Shizuku 权限丢了，请重新激活", Toast.LENGTH_LONG).show()
             return
         }
         if (!Settings.canDrawOverlays(this)) {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-            Toast.makeText(this, "授权悬浮窗后点激活", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "⚠️ 悬浮窗权限丢了，请重新激活", Toast.LENGTH_LONG).show()
             return
         }
-        startService()
-    }
-
-    private fun requestShizuku() {
-        ShizukuShell.requestPermission(this) { granted ->
-            runOnUiThread {
-                if (granted) {
-                    Toast.makeText(this, "✅ Shizuku 权限已授予", Toast.LENGTH_LONG).show()
-                    if (!Settings.canDrawOverlays(this)) {
-                        startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
-                    } else {
-                        startService()
-                    }
-                } else {
-                    Toast.makeText(this, "❌ 授权被拒绝，请在 Shizuku Manager 启动服务", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
+        MappingForegroundService.start(this)
+        Toast.makeText(this, "🎉 K2ER 已启动！退出到其他 APP 即可看到悬浮球", Toast.LENGTH_LONG).show()
     }
 
     private fun startService() {
-        MappingForegroundService.start(this)
-        Toast.makeText(this, "🎉 K2ER 已启动！悬浮球显示在屏幕上", Toast.LENGTH_LONG).show()
+        startK2er()
     }
 }
