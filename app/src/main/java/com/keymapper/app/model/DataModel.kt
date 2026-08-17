@@ -29,7 +29,6 @@ data class Mapping(
     val targetY: Float = 0f,
     val durationMs: Long = 300L,
     val enabled: Boolean = true,
-    val blocked: Boolean = true,
     val steps: List<ActionStep> = emptyList()
 )
 

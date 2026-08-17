@@ -147,7 +147,7 @@ class FloatingWindowManager(private val context: Context) {
 
     private fun startRefresh() {
         refreshJob?.cancel()
-        refreshJob = scope.launch(Dispatchers.Default) {
+        refreshJob = scope.launch {
             while (true) {
                 InputMonitor.refreshForegroundPackage()
                 updateBall()
@@ -255,7 +255,7 @@ class FloatingWindowManager(private val context: Context) {
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (moved && ball) v.performClick()
+                    if (!moved && ball) v.performClick()
                 }
             }
             true

@@ -2,20 +2,19 @@ package com.keymapper.app.service
 
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.util.Log
 import android.view.KeyEvent
 import com.keymapper.app.AppContainer
-import com.keymapper.app.mapping.MappingRepository
 import com.keymapper.app.mapping.ShizukuShell
 import com.keymapper.app.model.HidButtonEvent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 
 object InputMonitor {
     private const val TAG = "InputMonitor-K2ER"
@@ -29,14 +28,18 @@ object InputMonitor {
     private var refreshJob: Job? = null
     private var geteventJob: Job? = null
 
+    @Volatile private var running = false
+
     fun start(context: Context) {
-        if (refreshJob != null) return
+        if (running) return
+        running = true
         startPackageMonitor()
         startGeteventListener()
         Log.i(TAG, "✅ InputMonitor started (K2er mode)")
     }
 
     fun stop() {
+        running = false
         refreshJob?.cancel()
         refreshJob = null
         geteventJob?.cancel()
@@ -47,7 +50,7 @@ object InputMonitor {
     private fun startPackageMonitor() {
         refreshJob?.cancel()
         refreshJob = scope.launch {
-            while (true) {
+            while (running) {
                 refreshForegroundPackage()
                 delay(500)
             }
@@ -85,12 +88,10 @@ object InputMonitor {
         } catch (_: Throwable) { null }
     }
 
-    // ---- K2er getevent 按键捕获 ----
-
     private fun startGeteventListener() {
         geteventJob?.cancel()
         geteventJob = scope.launch {
-            while (true) {
+            while (running) {
                 if (!ShizukuShell.isPermissionGranted()) {
                     delay(2000); continue
                 }
@@ -122,18 +123,21 @@ object InputMonitor {
 
     private suspend fun runGeteventLoop(paths: List<String>): Boolean {
         val process = ShizukuShell.execProcess("getevent -l ${paths.joinToString(" ")}") ?: return false
-        return try {
+        try {
             val reader = process.inputStream.bufferedReader()
             var lastBtn = ""; var lastTime = 0L
-            while (true) {
-                val line = reader.readLine() ?: break
+            while (running) {
+                val line: String? = try {
+                    runInterruptible(Dispatchers.IO) { reader.readLine() }
+                } catch (_: java.io.IOException) {
+                    if (Thread.currentThread().isInterrupted) break
+                    null
+                }
+                line ?: break
                 val parsed = parseGeteventLine(line) ?: continue
                 val now = System.currentTimeMillis()
                 if (parsed.buttonId == lastBtn && now - lastTime < 40L && parsed.isDown) continue
                 lastBtn = parsed.buttonId; lastTime = now
-
-                refreshForegroundPackage()
-                val pkg = currentPackageName
 
                 val btnEvent = HidButtonEvent(
                     buttonId = parsed.buttonId,
@@ -144,12 +148,16 @@ object InputMonitor {
                 )
 
                 val engine = runCatching { com.keymapper.app.AppContainer.require().mappingEngine }.getOrNull()
-                runCatching { engine?.onButtonEvent(btnEvent, pkg) }
+                runCatching { engine?.onButtonEvent(btnEvent, currentPackageName) }
             }
-            process.waitFor(); true
+            process.waitFor(); return true
+        } catch (e: CancellationException) {
+            Log.i(TAG, "getevent cancelled"); return false
         } catch (e: Throwable) {
-            Log.e(TAG, "getevent error", e); false
-        } finally { runCatching { process.destroy() } }
+            Log.e(TAG, "getevent error", e); return false
+        } finally {
+            runCatching { process.destroy() }
+        }
     }
 
     private data class ParsedKey(val buttonId: String, val isDown: Boolean, val devicePath: String)
@@ -186,7 +194,6 @@ object InputMonitor {
         else -> "UNKNOWN"
     }
 
-    // ---- Legacy keyEventToButton for Activity-level picking (ButtonPickerActivity etc) ----
     fun keyEventToButton(event: KeyEvent): String {
         val kc = event.keyCode
         return when (kc) {

@@ -70,10 +70,21 @@ object ShizukuShell {
         false
     }
 
-    fun requestPermission(context: Context, onResult: (granted: Boolean, code: Int) -> Unit) {
-        Shizuku.addRequestPermissionResultListener(Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
-            onResult(grantResult == PackageManager.PERMISSION_GRANTED, requestCode)
-        })
+    @Volatile private var pendingCallback: ((granted: Boolean) -> Unit)? = null
+    @Volatile private var registeredListener = false
+    private val permissionListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            val cb = pendingCallback; pendingCallback = null
+            cb?.invoke(grantResult == PackageManager.PERMISSION_GRANTED)
+        }
+    }
+
+    fun requestPermission(context: Context, onResult: (granted: Boolean) -> Unit) {
+        pendingCallback = onResult
+        if (!registeredListener) {
+            Shizuku.addRequestPermissionResultListener(permissionListener)
+            registeredListener = true
+        }
         Shizuku.requestPermission(PERMISSION_REQUEST_CODE)
     }
 

@@ -308,7 +308,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestShizuku() {
-        ShizukuShell.requestPermission(this) { granted, _ ->
+        ShizukuShell.requestPermission(this) { granted ->
             runOnUiThread {
                 if (granted) {
                     Toast.makeText(this, "✅ Shizuku 权限已授予", Toast.LENGTH_LONG).show()
