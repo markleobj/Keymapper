@@ -102,38 +102,15 @@ class MappingConfigActivity : AppCompatActivity() {
             .show()
     }
 
-    private val EXCLUDED_PREFIXES = listOf(
-        "moe.shizuku.",
-        "com.hihonor.",
-        "com.huawei.",
-        "com.miui.",
-        "com.xiaomi.",
-        "com.oppo.",
-        "com.coloros.",
-        "com.vivo.",
-        "com.samsung.",
-        "com.android.settings",
-        "com.android.systemui",
-        "com.android.shell",
-        "com.android.inputmethod",
-        "com.google.android.inputmethod",
-        "com.baidu.input",
-        "com.ijiami.",
-        "com.tencent.qqpim",
-        "com.android.vending"
-    )
-
     private fun queryInstalledApps(): List<Pair<String, String>> {
         val pm = packageManager
-        return pm.getInstalledApplications(PackageManager.GET_META_DATA or PackageManager.GET_ACTIVITIES)
-            .filter { ai ->
+        return pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            .mapNotNull { ai ->
                 val pkg = ai.packageName
-                if (pkg == packageName) return@filter false
-                if (pm.getLaunchIntentForPackage(pkg) == null) return@filter false
-                if (EXCLUDED_PREFIXES.any { pkg.startsWith(it) }) return@filter false
-                true
+                if (pkg == packageName) return@mapNotNull null
+                if (pm.getLaunchIntentForPackage(pkg) == null) return@mapNotNull null
+                pkg to pm.getApplicationLabel(ai).toString()
             }
-            .map { it.packageName to pm.getApplicationLabel(it).toString() }
             .sortedBy { it.second }
     }
 

@@ -80,6 +80,7 @@ class FloatingWindowManager(private val context: Context) {
         running = true
         startObserve()
         startRefresh()
+        InputMonitor.ensureCaptureWindow()
         Log.i(TAG, "✅ FloatingWindowManager started (auto-hide self)")
     }
 
