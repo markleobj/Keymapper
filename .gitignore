@@ -11,3 +11,13 @@ local.properties
 *.apk
 *.aab
 *.keystore
+**/build/
+.gradle/
+local.properties
+*.iml
+*.apk
+*.aab
+*.keystore
+captures/
+.externalNativeBuild/
+.cxx/
