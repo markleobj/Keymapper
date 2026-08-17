@@ -239,17 +239,6 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "⚠️ 权限丢了，请重新激活", Toast.LENGTH_SHORT).show()
             return
         }
-        if (Build.VERSION.SDK_INT >= 31 && packageManager.checkPermission("android.permission.QUERY_ALL_PACKAGES", packageName) != PackageManager.PERMISSION_GRANTED) {
-            AlertDialog.Builder(this)
-                .setTitle("📱 允许查看所有 APP")
-                .setMessage("需要这个权限才能在列表里选目标 APP（梦幻西游/抖音等）\n\n即将跳转到设置页，找到 KeyMapper 打开『允许所有 APP』")
-                .setPositiveButton("去设置") { _, _ ->
-                    runCatching { startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))) }
-                }
-                .setNegativeButton("跳过") { _, _ -> startK2erActually() }
-                .show()
-            return
-        }
         startK2erActually()
     }
 
