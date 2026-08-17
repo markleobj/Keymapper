@@ -102,27 +102,35 @@ class MappingConfigActivity : AppCompatActivity() {
             .show()
     }
 
-    private val EXCLUDED_PACKAGES = setOf(
-        "moe.shizuku.privileged.api",   // Shizuku Manager
-        "com.android.shell",
+    private val EXCLUDED_PREFIXES = listOf(
+        "moe.shizuku.",
+        "com.hihonor.",
+        "com.huawei.",
+        "com.miui.",
+        "com.xiaomi.",
+        "com.oppo.",
+        "com.coloros.",
+        "com.vivo.",
+        "com.samsung.",
         "com.android.settings",
-        "com.miui.home",
-        "com.huawei.home",
-        "com.oppo.home",
-        "com.vivo.home",
-        "com.android.systemui"
+        "com.android.systemui",
+        "com.android.shell",
+        "com.android.inputmethod",
+        "com.google.android.inputmethod",
+        "com.baidu.input",
+        "com.ijiami.",
+        "com.tencent.qqpim",
+        "com.android.vending"
     )
 
     private fun queryInstalledApps(): List<Pair<String, String>> {
         val pm = packageManager
         return pm.getInstalledApplications(PackageManager.GET_META_DATA or PackageManager.GET_ACTIVITIES)
             .filter { ai ->
-                if (ai.packageName == packageName) return@filter false
-                if (EXCLUDED_PACKAGES.contains(ai.packageName)) return@filter false
-                if (pm.getLaunchIntentForPackage(ai.packageName) == null) return@filter false
-                val isSystem = (ai.flags and ApplicationInfo.FLAG_SYSTEM) != 0
-                val isUpdatedSystem = (ai.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
-                if (isSystem && !isUpdatedSystem) return@filter false
+                val pkg = ai.packageName
+                if (pkg == packageName) return@filter false
+                if (pm.getLaunchIntentForPackage(pkg) == null) return@filter false
+                if (EXCLUDED_PREFIXES.any { pkg.startsWith(it) }) return@filter false
                 true
             }
             .map { it.packageName to pm.getApplicationLabel(it).toString() }
