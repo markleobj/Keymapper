@@ -254,6 +254,11 @@ class MainActivity : AppCompatActivity() {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, 8, 0, 0)
             }
+            val btnLaunch = TextView(this@MainActivity).apply {
+                text = "🚀 打开APP"; textSize = 12f; setTextColor(0xFF2E7D32.toInt())
+                setPadding(16, 6, 16, 6)
+                setOnClickListener { launchAppAndMinimize(app.packageName) }
+            }
             val btnNewMap = TextView(this@MainActivity).apply {
                 text = "➕ 新增映射"; textSize = 12f; setTextColor(0xFF1976D2.toInt())
                 setPadding(16, 6, 16, 6)
@@ -264,7 +269,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             val btnDel = TextView(this@MainActivity).apply {
-                text = "🗑 删除APP"
+                text = "🗑"
                 textSize = 12f; setTextColor(0xFFE53935.toInt())
                 setPadding(16, 6, 16, 6)
                 setOnClickListener {
@@ -276,11 +281,24 @@ class MainActivity : AppCompatActivity() {
                     }.show()
                 }
             }
-            actionRow.addView(btnNewMap); actionRow.addView(btnDel)
+            actionRow.addView(btnLaunch); actionRow.addView(btnNewMap); actionRow.addView(btnDel)
             addView(actionRow)
         }
     }
 
+
+
+    private fun launchAppAndMinimize(pkg: String) {
+        val intent = packageManager.getLaunchIntentForPackage(pkg)
+        if (intent != null) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            startActivity(intent)
+            finish()
+            Toast.makeText(this, "✅ 已打开目标APP，悬浮球现在在屏幕上", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(this, "⚠️ 找不到启动入口", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     private fun activate() {
         AlertDialog.Builder(this)

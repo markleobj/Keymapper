@@ -150,7 +150,14 @@ class FloatingWindowManager(private val context: Context) {
                 hidePanel()
             }
             panel.findViewById<View>(R.id.btn_new_mapping).setOnClickListener {
-                context.startActivity(Intent(context, MappingConfigActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK })
+                val pkg = InputMonitor.currentPackageName
+                val app = pkg?.let { AppContainer.getOrCreate(context).mappingRepository.getApp(it) }
+                val sceneId = app?.activeSceneId ?: app?.scenes?.firstOrNull()?.id
+                context.startActivity(Intent(context, MappingConfigActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    pkg?.let { putExtra("PKG", it) }
+                    sceneId?.let { putExtra("SCENE_ID", it) }
+                })
                 hidePanel()
             }
             panel.findViewById<View>(R.id.btn_close).setOnClickListener { hidePanel() }
@@ -258,7 +265,7 @@ class FloatingWindowManager(private val context: Context) {
                 textSize = 11f; setTextColor(if (m.enabled) 0xFF212121.toInt() else 0xFF9E9E9E.toInt())
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             }
-            val btn = AppCompatButton(context).apply {
+            val btnToggle = AppCompatButton(context).apply {
                 text = if (m.enabled) "停" else "启"; textSize = 10f
                 setOnClickListener {
                     scope.launch(Dispatchers.Default) {
@@ -271,7 +278,27 @@ class FloatingWindowManager(private val context: Context) {
                     }
                 }
             }
-            row.addView(ind); row.addView(label); row.addView(btn)
+            val btnEdit = AppCompatButton(context).apply {
+                text = "改"; textSize = 10f
+                setOnClickListener {
+                    context.startActivity(Intent(context, MappingConfigActivity::class.java).apply {
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                        putExtra("PKG", app.packageName)
+                        putExtra("SCENE_ID", scene.id)
+                        putExtra("MAPPING_ID", m.id)
+                    })
+                    hidePanel()
+                }
+            }
+            val btnDel = AppCompatButton(context).apply {
+                text = "删"; textSize = 10f; setTextColor(0xFFE53935.toInt())
+                setOnClickListener {
+                    scope.launch(Dispatchers.Default) {
+                        runCatching { repo.deleteMapping(app.packageName, scene.id, m.id) }
+                    }
+                }
+            }
+            row.addView(ind); row.addView(label); row.addView(btnToggle); row.addView(btnEdit); row.addView(btnDel)
             container.addView(row)
         }
     }
