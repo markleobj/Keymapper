@@ -2,6 +2,7 @@ package com.keymapper.app.ui
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ApplicationInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
@@ -91,10 +92,14 @@ class MappingConfigActivity : AppCompatActivity() {
     private fun queryInstalledApps(): List<Pair<String, String>> {
         val pm = packageManager
         return pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { it.packageName != packageName && !it.packageName.startsWith("com.android") && !it.packageName.startsWith("com.google") }
+            .filter { ai ->
+                ai.packageName != packageName
+                    && (ai.flags and ApplicationInfo.FLAG_SYSTEM) == 0
+                    && (ai.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
+                    && pm.getLaunchIntentForPackage(ai.packageName) != null
+            }
             .map { it.packageName to pm.getApplicationLabel(it).toString() }
             .sortedBy { it.second }
-            .take(100)
     }
 
     @Suppress("SetTextI18n")
