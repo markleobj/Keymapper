@@ -119,6 +119,18 @@ class MainActivity : AppCompatActivity() {
     private fun showAddAppDialog() {
         val apps = queryInstalledApps()
         if (apps.isEmpty()) {
+            if (Build.VERSION.SDK_INT >= 31 && packageManager.checkPermission("android.permission.QUERY_ALL_PACKAGES", packageName) != PackageManager.PERMISSION_GRANTED) {
+                AlertDialog.Builder(this)
+                    .setTitle("📱 允许 KeyMapper 读取所有 APP")
+                    .setMessage("即将跳转到系统设置页，找到 KeyMapper，打开『允许所有 APP』开关。")
+                    .setPositiveButton("去设置") { _, _ ->
+                        startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+                return
+            }
+
             AlertDialog.Builder(this)
                 .setTitle("没找到 APP")
                 .setMessage("可能缺少『允许所有 APP』权限。\n\n请先激活（点顶部 K2er 未激活），激活流程最后一步会引导你开启这个权限。\n\n或者你手机上安装的 APP 比较少。")
@@ -139,25 +151,15 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private val EXCLUDED_PREFIXES = listOf(
-        "moe.shizuku.", "com.hihonor.", "com.huawei.", "com.miui.",
-        "com.xiaomi.", "com.oppo.", "com.coloros.", "com.vivo.",
-        "com.samsung.", "com.android.settings", "com.android.systemui",
-        "com.android.shell", "com.android.inputmethod",
-        "com.google.android.inputmethod", "com.baidu.input", "com.android.vending"
-    )
-
     private fun queryInstalledApps(): List<Pair<String, String>> {
         val pm = packageManager
-        return pm.getInstalledApplications(PackageManager.GET_META_DATA or PackageManager.GET_ACTIVITIES)
-            .filter { ai ->
+        return pm.getInstalledApplications(PackageManager.GET_META_DATA)
+            .mapNotNull { ai ->
                 val pkg = ai.packageName
-                if (pkg == packageName) return@filter false
-                if (pm.getLaunchIntentForPackage(pkg) == null) return@filter false
-                if (EXCLUDED_PREFIXES.any { pkg.startsWith(it) }) return@filter false
-                true
+                if (pkg == packageName) return@mapNotNull null
+                if (pm.getLaunchIntentForPackage(pkg) == null) return@mapNotNull null
+                pkg to pm.getApplicationLabel(ai).toString()
             }
-            .map { it.packageName to pm.getApplicationLabel(it).toString() }
             .sortedBy { it.second }
     }
 
