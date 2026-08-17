@@ -40,6 +40,24 @@ object ShizukuShell {
         }
     }
 
+    fun execProcess(cmd: String): Process? {
+        if (!isPermissionGranted()) return null
+        return execShell(cmd)
+    }
+
+    fun execSync(cmd: String): String {
+        if (!isPermissionGranted()) return ""
+        return try {
+            val process = execShell(cmd) ?: return ""
+            val out = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor()
+            out
+        } catch (e: Throwable) {
+            Log.e(TAG, "execSync failed: $cmd", e)
+            ""
+        }
+    }
+
     fun isBinderAvailable(): Boolean = try {
         Shizuku.pingBinder()
     } catch (_: IllegalStateException) {
