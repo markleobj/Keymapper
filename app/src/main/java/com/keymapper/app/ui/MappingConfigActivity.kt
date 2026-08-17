@@ -23,6 +23,7 @@ import com.keymapper.app.AppContainer
 import com.keymapper.app.R
 import com.keymapper.app.model.ActionType
 import com.keymapper.app.model.Mapping
+import com.keymapper.app.floating.FloatingCoordinatePicker
 import com.keymapper.app.service.InputMonitor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +42,8 @@ class MappingConfigActivity : AppCompatActivity() {
     private var pkgName: String = ""
     private var sceneId: String? = null
     private var editMappingId: String? = null
+    private var pendingX: Float = 0f
+    private var pendingY: Float = 0f
 
     private lateinit var etName: EditText
     private lateinit var tvButton: TextView
@@ -71,6 +74,16 @@ class MappingConfigActivity : AppCompatActivity() {
 
         buildUI()
         if (editMappingId != null) loadExisting()
+        intent.getStringExtra("BTN")?.let {
+            targetButton = it
+            tvButton?.text = it
+        }
+        if (intent.hasExtra("X")) {
+            val x = intent.getFloatExtra("X", 0f)
+            val y = intent.getFloatExtra("Y", 0f)
+            targetX = x; targetY = y
+            tvCoord?.text = "(${x.toInt()}, ${y.toInt()})"
+        }
     }
 
     private fun promptSelectApp() {
@@ -239,7 +252,22 @@ class MappingConfigActivity : AppCompatActivity() {
     }
 
     private fun pickCoordinate() {
-        startActivityForResult(Intent(this, CoordinatePickerActivity::class.java), REQ_COORD)
+        FloatingCoordinatePicker.showAndLaunch(this, pkgName) { x, y ->
+            pendingX = x; pendingY = y
+            targetX = x; targetY = y
+            tvCoord.text = "(${x.toInt()}, ${y.toInt()})"
+            android.widget.Toast.makeText(this@MappingConfigActivity,
+                "✅ 已拾取 (${x.toInt()}, ${y.toInt()})", android.widget.Toast.LENGTH_SHORT).show()
+            startActivity(Intent(this@MappingConfigActivity, MappingConfigActivity::class.java).apply {
+                putExtra("PKG", pkgName)
+                sceneId?.let { putExtra("SCENE_ID", it) }
+                editMappingId?.let { putExtra("MAPPING_ID", it) }
+                putExtra("BTN", targetButton)
+                putExtra("X", x); putExtra("Y", y)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            })
+            finish()
+        }
     }
 
     private fun loadExisting() {
