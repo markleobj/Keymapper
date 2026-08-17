@@ -285,11 +285,13 @@ class MainActivity : AppCompatActivity() {
     private fun activate() {
         AlertDialog.Builder(this)
             .setTitle("🔑 激活 KeyMapper (K2ER)")
-            .setMessage("需要 3 个条件（全部通过后自动启动）：\n\n" +
-                "1️⃣ Shizuku Manager 已安装 + ADB 启动 server\n" +
-                "2️⃣ KeyMapper 获得 Shizuku shell 权限\n" +
-                "3️⃣ 允许悬浮窗显示\n\n" +
-                "✅ 无无障碍  ✅ 无输入法  ✅ 无 root")
+            .setMessage("K2ER 技术路线（3 个条件）：\n\n" +
+                "① Shizuku server 启动\n" +
+                "   (WiFi 配对 / ADB / Shizuku Manager)\n\n" +
+                "② KeyMapper 获得 Shizuku shell 权限\n\n" +
+                "③ 允许悬浮窗显示\n\n" +
+                "✅ 无无障碍  ✅ 无输入法  ✅ 无 root\n\n" +
+                "首次启动请准备 Shizuku Manager")
             .setPositiveButton("开始检查") { _, _ -> doActivate() }
             .setNegativeButton("取消", null)
             .show()
@@ -299,7 +301,18 @@ class MainActivity : AppCompatActivity() {
         if (!ShizukuShell.isBinderAvailable()) {
             AlertDialog.Builder(this)
                 .setTitle("⚠️ Shizuku server 未启动")
-                .setMessage("Shizuku Manager 的 server 还没跑起来。\n\n请：\n1. 安装 Shizuku Manager\n2. USB 连电脑开 ADB\n3. 执行 adb shell sh /data/user_de/0/moe.shizuku.privileged.api/start.sh\n4. 或直接在 Shizuku Manager 里点『启动』\n\n启动后回到本应用点『已启动』")
+                .setMessage("Shizuku server 没跑起来。有 3 种启动方式：\n\n" +
+                    "方式 A — WiFi 配对（推荐，和 K2ER 一样）：\n" +
+                    "  1. 开发者选项 → 无线调试 → 打开\n" +
+                    "  2. 点『使用配对码配对设备』记下 IP:端口 和 配对码\n" +
+                    "  3. 电脑：adb pair <ip>:<port>\n" +
+                    "  4. 电脑：adb connect <ip>:<port>\n" +
+                    "  5. 打开 Shizuku Manager 点『启动』\n\n" +
+                    "方式 B — USB ADB：\n" +
+                    "  adb shell sh /data/user_de/0/moe.shizuku.privileged.api/start.sh\n\n" +
+                    "方式 C — Shizuku Manager 直接启动：\n" +
+                    "  某些机型 Shizuku Manager 可直接点『启动』\n\n" +
+                    "启动 server 后回到本应用")
                 .setPositiveButton("下载 Shizuku") { _, _ ->
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")))
                 }
