@@ -1,0 +1,69 @@
+package io.github.sds100.keymapper.sysbridge;
+
+import io.github.sds100.keymapper.evdev.IEvdevCallback;
+import io.github.sds100.keymapper.sysbridge.ILogCallback;
+import io.github.sds100.keymapper.common.models.EvdevDeviceInfo;
+import io.github.sds100.keymapper.common.models.GrabTargetKeyCode;
+import io.github.sds100.keymapper.common.models.GrabbedDeviceHandle;
+import io.github.sds100.keymapper.common.models.ShellResult;
+import android.view.InputEvent;
+
+interface ISystemBridge {
+   void destroy() = 16777114;
+   int getProcessUid() = 16777113;
+   int getVersionCode() = 16777112;
+   ShellResult executeCommand(String command, long timeoutMillis) = 16777111;
+
+   GrabbedDeviceHandle[] setGrabTargets(in GrabTargetKeyCode[] devices) = 1;
+
+   void registerEvdevCallback(IEvdevCallback callback) = 5;
+   void unregisterEvdevCallback() = 6;
+
+   boolean writeEvdevEvent(int deviceId, int type, int code, int value) = 7;
+   boolean injectInputEvent(in InputEvent event, int mode) = 8;
+
+   EvdevDeviceInfo[] getEvdevInputDevices() = 9;
+
+   boolean setWifiEnabled(boolean enable) = 10;
+
+   void grantPermission(String permission, int deviceId) = 11;
+
+   void setDataEnabled(int subId, boolean enable) = 12;
+
+   void setBluetoothEnabled(boolean enable) = 13;
+
+   void setNfcEnabled(boolean enable) = 14;
+
+   void setAirplaneMode(boolean enable) = 15;
+
+   void forceStopPackage(String packageName) = 16;
+
+   void removeTasks(String packageName) = 17;
+
+   void setRingerMode(int ringerMode) = 18;
+
+   boolean isTetheringEnabled() = 19;
+
+   void setTetheringEnabled(boolean enable) = 20;
+
+   long getUsbScreenUnlockedFunctions() = 21;
+
+   boolean writeEvdevEventKeyCode(int deviceId, int keyCode, int value) = 22;
+
+   void registerLogCallback(ILogCallback callback) = 23;
+   void unregisterLogCallback() = 24;
+   void setLogLevel(int level) = 25;
+
+   /**
+    * Returns all settings for the given namespace as an array of "key=value" strings.
+    * The namespace must be one of "system", "secure", or "global".
+    * Queries the Settings ContentProvider directly with the system bridge's elevated privileges.
+    */
+   String[] getAllSettings(String namespace) = 26;
+
+   /**
+    * Enable or disable the power button emergency stop (holding the power button for 10+
+    * seconds and releasing it kills the system bridge). Defaults to enabled.
+    */
+   void setEmergencyStopEnabled(boolean enabled) = 27;
+}

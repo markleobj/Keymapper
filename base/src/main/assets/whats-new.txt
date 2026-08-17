@@ -1,0 +1,6 @@
+• Display resolution constraint
+• Ringer mode constraint
+• Set "do not remap" by default in settings
+• Bug fixes
+
+📖 View the complete changelog at: http://keymapper.app/changelog
