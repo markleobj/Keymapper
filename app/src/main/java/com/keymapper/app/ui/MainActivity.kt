@@ -326,7 +326,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun startService() {
         MappingForegroundService.start(this)
-        InputMonitor.start(this)
         Toast.makeText(this, "🎉 K2ER 已启动！悬浮球显示在屏幕上", Toast.LENGTH_LONG).show()
     }
 }

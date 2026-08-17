@@ -17,7 +17,6 @@ import android.widget.TextView
 import androidx.appcompat.widget.AppCompatButton
 import com.keymapper.app.AppContainer
 import com.keymapper.app.R
-import com.keymapper.app.mapping.MappingRepository
 import com.keymapper.app.mapping.ShizukuShell
 import com.keymapper.app.model.AppConfig
 import com.keymapper.app.service.InputMonitor
@@ -50,11 +49,14 @@ class FloatingWindowManager(private val context: Context) {
 
     private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val selfPkg = context.packageName
+
     private var ballView: View? = null
     private var panelView: View? = null
     private var ballParams: WindowManager.LayoutParams? = null
     private var panelParams: WindowManager.LayoutParams? = null
-    private var isRunning = false
+    private var running = false
+    private var ballShown = false
     private var observeJob: Job? = null
     private var refreshJob: Job? = null
 
@@ -73,24 +75,54 @@ class FloatingWindowManager(private val context: Context) {
 
     @SuppressLint("ClickableViewAccessibility")
     fun show() {
-        if (isRunning) return
+        if (running) return
         if (!canDrawOverlay(context)) { Log.e(TAG, "no overlay permission"); return }
-        val dm = context.resources.displayMetrics
-        val ball = LayoutInflater.from(context).inflate(R.layout.view_float_ball, null, false)
-        val params = lp(dp(48), dp(48), dp(8), dm.heightPixels / 3)
-        try {
-            wm.addView(ball, params); ballView = ball; ballParams = params; isRunning = true
-            ball.setOnTouchListener(dragBall); ball.setOnClickListener { togglePanel() }
-            startObserve(); startRefresh(); updateBall()
-            Log.i(TAG, "✅ K2er ball shown (NOT_FOCUSABLE)")
-        } catch (e: Throwable) { Log.e(TAG, "show ball failed", e) }
+        running = true
+        startObserve()
+        startRefresh()
+        Log.i(TAG, "✅ FloatingWindowManager started (auto-hide self)")
     }
 
     fun hide() {
         refreshJob?.cancel(); observeJob?.cancel()
-        runCatching { panelView?.let { wm.removeViewImmediate(it) } }
-        runCatching { ballView?.let { wm.removeViewImmediate(it) } }
-        panelView = null; ballView = null; panelParams = null; ballParams = null; isRunning = false
+        hidePanel(); hideBallInternal()
+        ballView = null; panelView = null; ballParams = null; panelParams = null
+        running = false
+        Log.i(TAG, "FloatingWindowManager stopped")
+    }
+
+    private fun showBallInternal() {
+        if (ballShown || ballView == null) return
+        val ball = ballView ?: return
+        val params = ballParams ?: return
+        try {
+            wm.addView(ball, params); ballShown = true; updateBall()
+            Log.d(TAG, "🎾 ball shown")
+        } catch (e: Throwable) { Log.e(TAG, "show ball failed", e) }
+    }
+
+    private fun hideBallInternal() {
+        if (!ballShown) return
+        val ball = ballView ?: return
+        try { wm.removeViewImmediate(ball); ballShown = false; hidePanel() } catch (_: Throwable) {}
+        Log.d(TAG, "🎾 ball hidden")
+    }
+
+    private fun ensureBallCreated(): Boolean {
+        if (ballView != null) return true
+        if (!canDrawOverlay(context)) return false
+        val dm = context.resources.displayMetrics
+        val ball = LayoutInflater.from(context).inflate(R.layout.view_float_ball, null, false)
+        val params = lp(dp(48), dp(48), dp(8), dm.heightPixels / 3)
+        try {
+            ballView = ball; ballParams = params
+            ball.setOnTouchListener(dragBall)
+            ball.setOnClickListener { togglePanel() }
+            return true
+        } catch (e: Throwable) {
+            ballView = null; ballParams = null
+            Log.e(TAG, "create ball failed", e); return false
+        }
     }
 
     private fun togglePanel() {
@@ -148,10 +180,15 @@ class FloatingWindowManager(private val context: Context) {
     private fun startRefresh() {
         refreshJob?.cancel()
         refreshJob = scope.launch {
-            while (true) {
-                InputMonitor.refreshForegroundPackage()
-                updateBall()
-                renderPanel()
+            while (running) {
+                val pkg = InputMonitor.currentPackageName
+                val selfForeground = pkg != null && pkg == selfPkg
+                if (!selfForeground) {
+                    if (ensureBallCreated()) showBallInternal()
+                    updateBall(); renderPanel()
+                } else {
+                    hideBallInternal()
+                }
                 delay(500)
             }
         }
@@ -161,7 +198,7 @@ class FloatingWindowManager(private val context: Context) {
         observeJob?.cancel()
         observeJob = scope.launch(Dispatchers.Default) {
             AppContainer.getOrCreate(context).mappingRepository.apps.collectLatest {
-                updateBall(); renderPanel()
+                scope.launch { updateBall(); renderPanel() }
             }
         }
     }
@@ -200,7 +237,7 @@ class FloatingWindowManager(private val context: Context) {
     }
 
     @SuppressLint("SetTextI18n")
-    private fun renderMappings(container: LinearLayout, app: AppConfig, repo: MappingRepository) {
+    private fun renderMappings(container: LinearLayout, app: AppConfig, repo: com.keymapper.app.mapping.MappingRepository) {
         val scene = app.activeSceneId?.let { app.scenes.firstOrNull { s -> s.id == it } }
             ?: app.scenes.firstOrNull() ?: return
         container.addView(TextView(context).apply {
