@@ -399,6 +399,28 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "⚠️ 悬浮窗权限丢了，请重新激活", Toast.LENGTH_LONG).show()
             return
         }
+        ensureQueryAllPackages()
+    }
+
+    private fun ensureQueryAllPackages() {
+        if (Build.VERSION.SDK_INT < 31) { startK2erActually(); return }
+        val pm = packageManager
+        if (pm.checkPermission("android.permission.QUERY_ALL_PACKAGES", packageName) == PackageManager.PERMISSION_GRANTED) {
+            startK2erActually(); return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("📱 允许查看所有 APP")
+            .setMessage("KeyMapper 需要查看你手机上的所有 APP，才能在列表里选目标（梦幻西游/抖音等）。\n\n即将跳转到系统设置页，找到 KeyMapper，打开『允许所有 APP』开关。")
+            .setPositiveButton("去设置") { _, _ ->
+                runCatching {
+                    startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+                }
+            }
+            .setNegativeButton("跳过") { _, _ -> startK2erActually() }
+            .show()
+    }
+
+    private fun startK2erActually() {
         MappingForegroundService.start(this)
         Toast.makeText(this, "🎉 K2ER 已启动！退出到其他 APP 即可看到悬浮球", Toast.LENGTH_LONG).show()
     }
