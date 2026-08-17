@@ -117,23 +117,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAddAppDialog() {
+        // 1. 先检查权限状态（Android 11+）
+        val hasAllPackages = if (Build.VERSION.SDK_INT >= 31) {
+            packageManager.checkPermission("android.permission.QUERY_ALL_PACKAGES", packageName) == PackageManager.PERMISSION_GRANTED
+        } else true
+
+        // 2. 如果没权限 → 只引导去设置，不查列表（查了也是空的，还会触发系统弹框）
+        if (!hasAllPackages) {
+            AlertDialog.Builder(this)
+                .setTitle("📱 需要允许读取应用列表")
+                .setMessage("KeyMapper 需要知道你手机上装了哪些 APP，才能让你选择要映射的目标。\n\n即将跳转到系统设置页 → 找到 KeyMapper → 打开『允许所有 APP』开关。\n\n打开后回到本应用，再点 ➕ 添加 APP。")
+                .setPositiveButton("去设置") { _, _ ->
+                    try {
+                        startActivity(Intent("android.settings.MANAGE_ALL_APPS_ACCESS", Uri.parse("package:$packageName")))
+                    } catch (_: Exception) {
+                        // 部分 ROM 没有这个 action → 退而求其次
+                        startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                    }
+                }
+                .setNegativeButton("取消", null)
+                .show()
+            return
+        }
+
+        // 3. 有权限了 → 查列表
         val apps = queryInstalledApps()
         if (apps.isEmpty()) {
-            if (Build.VERSION.SDK_INT >= 31 && packageManager.checkPermission("android.permission.QUERY_ALL_PACKAGES", packageName) != PackageManager.PERMISSION_GRANTED) {
-                AlertDialog.Builder(this)
-                    .setTitle("📱 允许 KeyMapper 读取所有 APP")
-                    .setMessage("即将跳转到系统设置页，找到 KeyMapper，打开『允许所有 APP』开关。")
-                    .setPositiveButton("去设置") { _, _ ->
-                        startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
-                    }
-                    .setNegativeButton("取消", null)
-                    .show()
-                return
-            }
-
             AlertDialog.Builder(this)
                 .setTitle("没找到 APP")
-                .setMessage("可能缺少『允许所有 APP』权限。\n\n请先激活（点顶部 K2er 未激活），激活流程最后一步会引导你开启这个权限。\n\n或者你手机上安装的 APP 比较少。")
+                .setMessage("你的手机上似乎没有有桌面图标的 APP？\n\n如果这不对，请截图反馈。")
                 .setPositiveButton("好的", null)
                 .show()
             return
