@@ -6,6 +6,7 @@ import android.view.KeyEvent
 import android.view.accessibility.AccessibilityEvent
 import androidx.core.content.getSystemService
 import dagger.hilt.android.AndroidEntryPoint
+import io.github.sds100.keymapper.base.detection.FullscreenOverlayKeyDetector
 import io.github.sds100.keymapper.base.system.accessibility.BaseAccessibilityService
 import io.github.sds100.keymapper.base.system.accessibility.BaseAccessibilityServiceController
 import javax.inject.Inject
@@ -16,6 +17,9 @@ class MyAccessibilityService : BaseAccessibilityService() {
 
     @Inject
     lateinit var controllerFactory: AccessibilityServiceController.Factory
+
+    @Inject
+    lateinit var overlayKeyDetector: FullscreenOverlayKeyDetector
 
     private var controller: AccessibilityServiceController? = null
     private var loggedLockedInitDelay = false
@@ -67,6 +71,8 @@ class MyAccessibilityService : BaseAccessibilityService() {
         if (controller == null) {
             controller = controllerFactory.create(this)
             controller?.onServiceConnected()
+            overlayKeyDetector.start()
+            Timber.i("FullscreenOverlayKeyDetector started")
         }
 
         return true
@@ -80,6 +86,7 @@ class MyAccessibilityService : BaseAccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onDestroy() {
+        overlayKeyDetector.stop()
         controller?.onDestroy()
         controller = null
 

@@ -4,4 +4,5 @@ enum class InputEventDetectionSource {
     ACCESSIBILITY_SERVICE,
     INPUT_METHOD,
     EVDEV,
+    FULLSCREEN_OVERLAY,
 }

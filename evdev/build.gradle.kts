@@ -58,10 +58,9 @@ cargo {
     module = "src/main/rust/evdev_manager"
     libname = "evdev_manager"
     targets = if (isDebug) {
-        // Only building for one target saves some time when developing
         listOf("arm64")
     } else {
-        listOf("arm", "arm64", "x86", "x86_64")
+        listOf("arm64")
     }
 
     // Can not do this with buildType configurations.
