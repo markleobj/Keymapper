@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.markleobj.keymapper.api"
+    namespace = "io.github.sds100.keymapper.api"
     compileSdk = libs.versions.compile.sdk.get().toInt()
 
     defaultConfig {

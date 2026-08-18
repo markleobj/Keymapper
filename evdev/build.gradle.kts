@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.markleobj.keymapper.evdev"
+    namespace = "io.github.sds100.keymapper.evdev"
     compileSdk = libs.versions.compile.sdk.get().toInt()
 
     // IMPORTANT! If you change this, also change it in build.rs for evdev crate and any CI workflows. This must
